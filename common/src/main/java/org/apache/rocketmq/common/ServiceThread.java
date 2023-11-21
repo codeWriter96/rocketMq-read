@@ -121,26 +121,38 @@ public abstract class ServiceThread implements Runnable {
     }
 
     public void wakeup() {
+        //将已通知标志从false改为true
         if (hasNotified.compareAndSet(false, true)) {
             waitPoint.countDown(); // notify
         }
     }
 
     protected void waitForRunning(long interval) {
+        //将已通知标志从true改为false
         if (hasNotified.compareAndSet(true, false)) {
+            //执行onWaitEnd方法，读写队列切换
             this.onWaitEnd();
             return;
         }
 
+        /*
+         * 进入这里表示CAS失败，即已通知标志位已经是false了
+         * 表示服务线程曾没有被尝试唤醒过，或者说wakeup()方法曾没有被调用过，即此前这段时间没有提交过消息存储的请求
+         */
         //entry to wait
+        //重置倒计数
         waitPoint.reset();
 
         try {
+            //由于此前没有刷盘请求被提交过，那么刷盘服务线程等待一定的时间，减少资源消耗
+            //同步刷盘服务最多等待10ms
             waitPoint.await(interval, TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             log.error("Interrupted", e);
         } finally {
+            //等待时间到了或者因为刷盘请求而被唤醒，此时将已通知标志位直接改为false，表示正在或已执行刷盘操作
             hasNotified.set(false);
+            //执行onWaitEnd方法，读写队列切换
             this.onWaitEnd();
         }
     }

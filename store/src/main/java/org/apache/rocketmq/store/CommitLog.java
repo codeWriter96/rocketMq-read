@@ -859,23 +859,36 @@ public class CommitLog {
     public CompletableFuture<PutMessageStatus> submitFlushRequest(AppendMessageResult result, MessageExt messageExt) {
         // Synchronization flush
         if (FlushDiskType.SYNC_FLUSH == this.defaultMessageStore.getMessageStoreConfig().getFlushDiskType()) {
+            //同步刷盘service
             final GroupCommitService service = (GroupCommitService) this.flushCommitLogService;
+            //是否等待消息完全刷盘成功
             if (messageExt.isWaitStoreMsgOK()) {
+                //构建同步刷盘请求 刷盘偏移量nextOffset = 当前写入偏移量 + 当前消息写入大小
                 GroupCommitRequest request = new GroupCommitRequest(result.getWroteOffset() + result.getWroteBytes(),
                         this.defaultMessageStore.getMessageStoreConfig().getSyncFlushTimeout());
+                //将刷盘请求提交到刷盘监视器的commitRequests中
                 flushDiskWatcher.add(request);
+                //将请求存入内部的requestsWrite，并且唤醒同步刷盘线程
                 service.putRequest(request);
+                //返回空的future,没有结果
                 return request.future();
             } else {
+                //不等待消息刷盘成功结果
+                //直接唤醒刷盘线程
                 service.wakeup();
+                //返回成功的future
                 return CompletableFuture.completedFuture(PutMessageStatus.PUT_OK);
             }
         }
         // Asynchronous flush
+        //异步刷盘，先存放到byteBuffer中，再由cpu决定何时刷盘
         else {
+            //是否使用directBuffer，堆外内存
             if (!this.defaultMessageStore.getMessageStoreConfig().isTransientStorePoolEnable()) {
+                //如果没有启动了堆外缓存，那么唤醒异步刷盘服务FlushRealTimeService
                 flushCommitLogService.wakeup();
             } else  {
+                //如果启动了堆外缓存，那么唤醒异步转存服务CommitRealTimeService
                 commitLogService.wakeup();
             }
             return CompletableFuture.completedFuture(PutMessageStatus.PUT_OK);
@@ -1183,8 +1196,17 @@ public class CommitLog {
      * GroupCommit Service
      */
     class GroupCommitService extends FlushCommitLogService {
+        /**
+         * 这种设计方式也是一种比较常见的"无锁编程"的方式
+         * 即在遍历一个"读队列"里的请求时，使用另外一个队列来接受新到来的请求，只需要在两个变量交换队列时与"写队列"写入时加锁即可
+         * 避免了在每次写入与读取都需要加锁，或直接使用一个阻塞队列所带来的消耗
+         */
+
+        //requestsWrite用于接收新到来的请求，（存放putRequest方法写入的刷盘请求）
         private volatile LinkedList<GroupCommitRequest> requestsWrite = new LinkedList<GroupCommitRequest>();
+        //线程中，会不断的对"读队列（requestsRead）"中的请求进行处理
         private volatile LinkedList<GroupCommitRequest> requestsRead = new LinkedList<GroupCommitRequest>();
+
         private final PutMessageSpinLock lock = new PutMessageSpinLock();
 
         public synchronized void putRequest(final GroupCommitRequest request) {
@@ -1194,12 +1216,16 @@ public class CommitLog {
             } finally {
                 lock.unlock();
             }
+            //唤醒同步线程
             this.wakeup();
         }
 
+        //队列交换
         private void swapRequests() {
+            //保证一个线程执行
             lock.lock();
             try {
+                //交换队列地址，将写队列切换成读队列，读队列切换成写队列
                 LinkedList<GroupCommitRequest> tmp = this.requestsWrite;
                 this.requestsWrite = this.requestsRead;
                 this.requestsRead = tmp;
@@ -1210,20 +1236,31 @@ public class CommitLog {
 
         private void doCommit() {
             if (!this.requestsRead.isEmpty()) {
+                //读队列不为空
                 for (GroupCommitRequest req : this.requestsRead) {
                     // There may be a message in the next file, so a maximum of
                     // two times the flush
+
+                    //如果flushedWhere大于下一个刷盘点位，则表示该位置的数据已经刷刷盘成功了，不再需要刷盘
+                    //flushedWhere的CommitLog的整体已刷盘物理偏移量
                     boolean flushOK = CommitLog.this.mappedFileQueue.getFlushedWhere() >= req.getNextOffset();
+                    //一个同步刷盘请求最多进行两次刷盘操作，因为文件是固定大小的，第一次刷盘时可能出现上一个文件剩余大小不足的情况
+                    //消息只能再一次刷到下一个文件中，因此最多会出现两次刷盘的情况
                     for (int i = 0; i < 2 && !flushOK; i++) {
+                        //执行强制刷盘操作，最少刷0页，即所有消息都会刷盘
                         CommitLog.this.mappedFileQueue.flush(0);
+
                         flushOK = CommitLog.this.mappedFileQueue.getFlushedWhere() >= req.getNextOffset();
                     }
-
+                    //调用flushOKFuture.complete方法存入结果，将唤醒因为提交同步刷盘请求而被阻塞的线程
                     req.wakeupCustomer(flushOK ? PutMessageStatus.PUT_OK : PutMessageStatus.FLUSH_DISK_TIMEOUT);
                 }
 
+                //获取存储时间戳
                 long storeTimestamp = CommitLog.this.mappedFileQueue.getStoreTimestamp();
                 if (storeTimestamp > 0) {
+                    //修改StoreCheckpoint中的physicMsgTimestamp：最新commitLog文件的刷盘时间戳，单位毫秒
+                    //这里用于重启数据恢复
                     CommitLog.this.defaultMessageStore.getStoreCheckpoint().setPhysicMsgTimestamp(storeTimestamp);
                 }
 
@@ -1231,6 +1268,7 @@ public class CommitLog {
             } else {
                 // Because of individual messages is set to not sync flush, it
                 // will come to this process
+                //某些消息的设置是同步刷盘但是不等待，因此这里直接进行刷盘即可，无需唤醒线程等操作
                 CommitLog.this.mappedFileQueue.flush(0);
             }
         }
@@ -1238,9 +1276,12 @@ public class CommitLog {
         public void run() {
             CommitLog.log.info(this.getServiceName() + " service started");
 
+            //如果没有停止，则死循环执行刷盘
             while (!this.isStopped()) {
                 try {
+                    //等待执行刷盘，固定最多每10ms执行一次
                     this.waitForRunning(10);
+                    //尝试执行批量刷盘
                     this.doCommit();
                 } catch (Exception e) {
                     CommitLog.log.warn(this.getServiceName() + " service has exception. ", e);
@@ -1249,6 +1290,10 @@ public class CommitLog {
 
             // Under normal circumstances shutdown, wait for the arrival of the
             // request, and then flush
+            /*
+             * 停止时逻辑
+             * 在正常情况下服务关闭时，将会线程等待10ms等待请求到达，然后一次性将剩余的request进行刷盘。
+             */
             try {
                 Thread.sleep(10);
             } catch (InterruptedException e) {
