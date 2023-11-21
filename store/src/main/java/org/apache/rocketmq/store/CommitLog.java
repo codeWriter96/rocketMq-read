@@ -1030,6 +1030,7 @@ public class CommitLog {
         protected static final int RETRY_TIMES_OVER = 10;
     }
 
+    //异步堆外缓存刷盘策略
     class CommitRealTimeService extends FlushCommitLogService {
 
         private long lastCommitTimestamp = 0;
@@ -1083,6 +1084,7 @@ public class CommitLog {
         }
     }
 
+    //异步刷盘策略
     class FlushRealTimeService extends FlushCommitLogService {
         private long lastFlushTimestamp = 0;
         private long printTimes = 0;
@@ -1194,6 +1196,7 @@ public class CommitLog {
 
     /**
      * GroupCommit Service
+     * 同步刷盘策略
      */
     class GroupCommitService extends FlushCommitLogService {
         /**
