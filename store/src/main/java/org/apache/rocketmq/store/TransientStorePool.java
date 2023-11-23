@@ -69,6 +69,7 @@ public class TransientStorePool {
     public void returnBuffer(ByteBuffer byteBuffer) {
         byteBuffer.position(0);
         byteBuffer.limit(fileSize);
+        //推入内存池availableBuffers的头部
         this.availableBuffers.offerFirst(byteBuffer);
     }
 

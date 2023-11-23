@@ -439,13 +439,20 @@ public class MappedFileQueue {
 
     public boolean flush(final int flushLeastPages) {
         boolean result = true;
+        //根据最新刷盘物理位置flushedWhere，去找到对应的MappedFile。如果flushedWhere为0，表示还没有开始写消息，则获取第一个MappedFile
         MappedFile mappedFile = this.findMappedFileByOffset(this.flushedWhere, this.flushedWhere == 0);
         if (mappedFile != null) {
+            //执行刷盘时间
             long tmpTimeStamp = mappedFile.getStoreTimestamp();
+            //执行刷盘操作
             int offset = mappedFile.flush(flushLeastPages);
+            //最新物理刷盘量
             long where = mappedFile.getFileFromOffset() + offset;
+            //判断是否刷盘成功
             result = where == this.flushedWhere;
+            //更新刷盘位置
             this.flushedWhere = where;
+            //如果刷盘页数为0，则更新存储时间戳
             if (0 == flushLeastPages) {
                 this.storeTimestamp = tmpTimeStamp;
             }
@@ -459,9 +466,13 @@ public class MappedFileQueue {
         //通过当前Queue的偏移量找到mappedFile
         MappedFile mappedFile = this.findMappedFileByOffset(this.committedWhere, this.committedWhere == 0);
         if (mappedFile != null) {
+            //提交操作
             int offset = mappedFile.commit(commitLeastPages);
+            //获取最新偏移量
             long where = mappedFile.getFileFromOffset() + offset;
+            //判断偏移量是否相等
             result = where == this.committedWhere;
+            //更新提交物理位置
             this.committedWhere = where;
         }
 
@@ -477,9 +488,12 @@ public class MappedFileQueue {
      */
     public MappedFile findMappedFileByOffset(final long offset, final boolean returnFirstOnNotFound) {
         try {
+            //第一个MappedFile
             MappedFile firstMappedFile = this.getFirstMappedFile();
+            //最后一个MappedFile
             MappedFile lastMappedFile = this.getLastMappedFile();
             if (firstMappedFile != null && lastMappedFile != null) {
+                //当前偏移量超出正常范围。日志记录
                 if (offset < firstMappedFile.getFileFromOffset() || offset >= lastMappedFile.getFileFromOffset() + this.mappedFileSize) {
                     LOG_ERROR.warn("Offset not matched. Request offset: {}, firstOffset: {}, lastOffset: {}, mappedFileSize: {}, mappedFiles count: {}",
                         offset,
@@ -488,18 +502,22 @@ public class MappedFileQueue {
                         this.mappedFileSize,
                         this.mappedFiles.size());
                 } else {
+                    //获取当前offset属于的MappedFile在mappedFiles集合中的索引位置
                     int index = (int) ((offset / this.mappedFileSize) - (firstMappedFile.getFileFromOffset() / this.mappedFileSize));
                     MappedFile targetFile = null;
                     try {
+                        //从list中获取
                         targetFile = this.mappedFiles.get(index);
                     } catch (Exception ignored) {
                     }
 
+                    //targetFile 不为null，且符合条件
                     if (targetFile != null && offset >= targetFile.getFileFromOffset()
                         && offset < targetFile.getFileFromOffset() + this.mappedFileSize) {
                         return targetFile;
                     }
 
+                    //否则遍历list找到何时的targetFile
                     for (MappedFile tmpMappedFile : this.mappedFiles) {
                         if (offset >= tmpMappedFile.getFileFromOffset()
                             && offset < tmpMappedFile.getFileFromOffset() + this.mappedFileSize) {
@@ -508,6 +526,7 @@ public class MappedFileQueue {
                     }
                 }
 
+                //没找到是否返回第一个MappedFile
                 if (returnFirstOnNotFound) {
                     return firstMappedFile;
                 }

@@ -280,39 +280,49 @@ public class MappedFile extends ReferenceResource {
      * @return The current flushed position
      */
     public int flush(final int flushLeastPages) {
+        //是否允许刷盘
         if (this.isAbleToFlush(flushLeastPages)) {
+            //是否能够引用，并增加对该MappedFile的引用次数
             if (this.hold()) {
                 int value = getReadPosition();
 
                 try {
                     //We only append data to fileChannel or mappedByteBuffer, never both.
                     if (writeBuffer != null || this.fileChannel.position() != 0) {
+                        //如果使用了堆外内存，那么通过fileChannel强制刷盘，这是异步堆外内存走的逻辑
                         this.fileChannel.force(false);
                     } else {
+                        //如果没有使用堆外内存，那么通过mappedByteBuffer强制刷盘，这是同步或者异步刷盘走的逻辑
                         this.mappedByteBuffer.force();
                     }
                 } catch (Throwable e) {
                     log.error("Error occurred when force data to disk.", e);
                 }
 
+                //设置刷盘写入位置
                 this.flushedPosition.set(value);
+                //减少对该MappedFile的引用次数
                 this.release();
             } else {
                 log.warn("in flush, hold failed, flush offset = " + this.flushedPosition.get());
                 this.flushedPosition.set(getReadPosition());
             }
         }
+        //返回最新刷盘位置
         return this.getFlushedPosition();
     }
 
+    //提交到堆外内存
     public int commit(final int commitLeastPages) {
         if (writeBuffer == null) {
             //如果堆外内存为null，表示未启用堆外内存，就不需要任何操作，只需等待刷盘即可
+            //所以只需将wrotePosition视为committedPosition返回即可
             //no need to commit data to file channel, so just regard wrotePosition as committedPosition.
             return this.wrotePosition.get();
         }
         if (this.isAbleToCommit(commitLeastPages)) {
             if (this.hold()) {
+                //将堆外内存中的全部脏数据提交到filechannel
                 commit0();
                 this.release();
             } else {
@@ -321,8 +331,11 @@ public class MappedFile extends ReferenceResource {
         }
 
         // All dirty data has been committed to FileChannel.
+        ////所有的脏数据被提交到了FileChannel，那么归还堆外缓存
         if (writeBuffer != null && this.transientStorePool != null && this.fileSize == this.committedPosition.get()) {
+            //将堆外缓存重置，并存入内存池availableBuffers的头部
             this.transientStorePool.returnBuffer(writeBuffer);
+            //writeBuffer职位null，下次再重新获取
             this.writeBuffer = null;
         }
 
@@ -350,17 +363,24 @@ public class MappedFile extends ReferenceResource {
     }
 
     private boolean isAbleToFlush(final int flushLeastPages) {
+        //已经刷盘位置
         int flush = this.flushedPosition.get();
+        //写入位置
         int write = getReadPosition();
 
+        //写入位置  == 文件大小
         if (this.isFull()) {
             return true;
         }
 
+        //最小刷盘数量 > 0
         if (flushLeastPages > 0) {
+            //当  需要写入的位置/操作系统页框大小 - 已经刷盘位置/操作系统页框大小 >= 最小刷盘页数量   才会进行刷盘
+            //否则不进行刷盘，防止频繁进行刷盘
             return ((write / OS_PAGE_SIZE) - (flush / OS_PAGE_SIZE)) >= flushLeastPages;
         }
 
+        //最小刷盘数量 <= 0 情况，直接判断---->写入位置是否大于已刷盘位置
         return write > flush;
     }
 
