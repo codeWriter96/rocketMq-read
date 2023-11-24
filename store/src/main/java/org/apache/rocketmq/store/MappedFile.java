@@ -433,12 +433,16 @@ public class MappedFile extends ReferenceResource {
     }
 
     public SelectMappedBufferResult selectMappedBuffer(int pos) {
+        //获取写入位置，即 MappedFile的最大偏移量
         int readPosition = getReadPosition();
+        //如果指定相对偏移量小于最大偏移量并且大于等于0，那么截取内存
         if (pos < readPosition && pos >= 0) {
             if (this.hold()) {
                 ByteBuffer byteBuffer = this.mappedByteBuffer.slice();
                 byteBuffer.position(pos);
                 int size = readPosition - pos;
+                //byteBufferNewd的position = pos, byteBufferNew的limit = readPosition - pos
+                //即：新写入还没分发的数据
                 ByteBuffer byteBufferNew = byteBuffer.slice();
                 byteBufferNew.limit(size);
                 return new SelectMappedBufferResult(this.fileFromOffset + pos, byteBufferNew, size, this);

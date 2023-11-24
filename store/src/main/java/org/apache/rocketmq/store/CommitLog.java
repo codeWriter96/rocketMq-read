@@ -53,6 +53,7 @@ import java.util.function.Supplier;
 /**
  * Store all metadata downtime for recovery, data protection reliability
  */
+//虽然CommitLog文件顺序存储着所有的消息，但是其并没有区分任何的topic、tag等信息
 public class CommitLog {
     // Message's MAGIC CODE daa320a7
     public final static int MESSAGE_MAGIC_CODE = -626843481;
@@ -187,15 +188,20 @@ public class CommitLog {
     /**
      * Read CommitLog data, use data replication
      */
+    // 根据reputFromOffset的物理偏移量找到mappedFileQueue中对应的CommitLog文件的MappedFile
+    // 然后从该MappedFile中截取一段自reputFromOffset偏移量开始的ByteBuffer，这段内存存储着将要重放的消息
     public SelectMappedBufferResult getData(final long offset) {
         return this.getData(offset, offset == 0);
     }
 
     public SelectMappedBufferResult getData(final long offset, final boolean returnFirstOnNotFound) {
         int mappedFileSize = this.defaultMessageStore.getMessageStoreConfig().getMappedFileSizeCommitLog();
+        //通过偏移量查找 mappedFile
         MappedFile mappedFile = this.mappedFileQueue.findMappedFileByOffset(offset, returnFirstOnNotFound);
         if (mappedFile != null) {
+            //获取文件内的--->相对偏移量
             int pos = (int) (offset % mappedFileSize);
+            //从指定相对偏移量开始截取一段ByteBuffer，这段内存存储着将要重放的消息
             SelectMappedBufferResult result = mappedFile.selectMappedBuffer(pos);
             return result;
         }
@@ -288,9 +294,12 @@ public class CommitLog {
                                                      final boolean readBody) {
         try {
             // 1 TOTAL SIZE
+            //从字节流里读取 4 个字节，同时将position指针往后移动 4 位
+            //消息条目总长度
             int totalSize = byteBuffer.getInt();
 
             // 2 MAGIC CODE
+            //消息的magicCode属性，魔数，用来判断消息是正常消息还是空消息
             int magicCode = byteBuffer.getInt();
             switch (magicCode) {
                 case MESSAGE_MAGIC_CODE:
@@ -302,22 +311,31 @@ public class CommitLog {
                     return new DispatchRequest(-1, false /* success */);
             }
 
+            //内容
             byte[] bytesContent = new byte[totalSize];
 
+            //循环校验码
             int bodyCRC = byteBuffer.getInt();
 
+            //队列id
             int queueId = byteBuffer.getInt();
 
+            //消息flag
             int flag = byteBuffer.getInt();
 
+            //消息在消息消费队列的偏移量
             long queueOffset = byteBuffer.getLong();
 
+            //消息在commitlog中的偏移量
             long physicOffset = byteBuffer.getLong();
 
+            //消息系统flag，例如是否压缩、是否是事务消息
             int sysFlag = byteBuffer.getInt();
 
+            //消息生产者调用消息发送API的时间戳
             long bornTimeStamp = byteBuffer.getLong();
 
+            //消息发送者的IP和端口号
             ByteBuffer byteBuffer1;
             if ((sysFlag & MessageSysFlag.BORNHOST_V6_FLAG) == 0) {
                 byteBuffer1 = byteBuffer.get(bytesContent, 0, 4 + 4);
@@ -325,8 +343,10 @@ public class CommitLog {
                 byteBuffer1 = byteBuffer.get(bytesContent, 0, 16 + 4);
             }
 
+            //消息存储时间
             long storeTimestamp = byteBuffer.getLong();
 
+            //broker的IP和端口号
             ByteBuffer byteBuffer2;
             if ((sysFlag & MessageSysFlag.STOREHOSTADDRESS_V6_FLAG) == 0) {
                 byteBuffer2 = byteBuffer.get(bytesContent, 0, 4 + 4);
@@ -334,12 +354,16 @@ public class CommitLog {
                 byteBuffer2 = byteBuffer.get(bytesContent, 0, 16 + 4);
             }
 
+            //消息重试次数
             int reconsumeTimes = byteBuffer.getInt();
 
+            //事务消息物理偏移量
             long preparedTransactionOffset = byteBuffer.getLong();
 
+            //消息体长度
             int bodyLen = byteBuffer.getInt();
             if (bodyLen > 0) {
+                //读取消息体
                 if (readBody) {
                     byteBuffer.get(bytesContent, 0, bodyLen);
 
@@ -355,32 +379,44 @@ public class CommitLog {
                 }
             }
 
+            //Topic名称大小
             byte topicLen = byteBuffer.get();
             byteBuffer.get(bytesContent, 0, topicLen);
+            //topic的值
             String topic = new String(bytesContent, 0, topicLen, MessageDecoder.CHARSET_UTF8);
 
             long tagsCode = 0;
             String keys = "";
             String uniqKey = null;
 
+            //消息属性大小
             short propertiesLength = byteBuffer.getShort();
             Map<String, String> propertiesMap = null;
             if (propertiesLength > 0) {
                 byteBuffer.get(bytesContent, 0, propertiesLength);
+                //消息属性
                 String properties = new String(bytesContent, 0, propertiesLength, MessageDecoder.CHARSET_UTF8);
                 propertiesMap = MessageDecoder.string2messageProperties(properties);
 
                 keys = propertiesMap.get(MessageConst.PROPERTY_KEYS);
 
+                //客户端生成的uniqId，也被称为msgId，从逻辑上代表客户端生成的唯一一条消息
                 uniqKey = propertiesMap.get(MessageConst.PROPERTY_UNIQ_CLIENT_MESSAGE_ID_KEYIDX);
 
                 String tags = propertiesMap.get(MessageConst.PROPERTY_TAGS);
+
+                //普通消息的tagsCode被设置为tag的hashCode
                 if (tags != null && tags.length() > 0) {
                     tagsCode = MessageExtBrokerInner.tagsString2tagsCode(MessageExt.parseTopicFilterType(sysFlag), tags);
                 }
 
                 // Timing message processing
+                /*
+                 * 延迟消息处理
+                 * 对于延迟消息，tagsCode被替换为延迟消息的发送时间，主要用于后续判断消息是否到期
+                 */
                 {
+                    //消息属性中获取延迟级别DELAY字段，如果是延迟消息则生产者会在构建消息的时候设置进去
                     String t = propertiesMap.get(MessageConst.PROPERTY_DELAY_TIME_LEVEL);
                     if (TopicValidator.RMQ_SYS_SCHEDULE_TOPIC.equals(topic) && t != null) {
                         int delayLevel = Integer.parseInt(t);
@@ -410,6 +446,7 @@ public class CommitLog {
                 return new DispatchRequest(totalSize, false/* success */);
             }
 
+            //根据读取的消息属性内容，构建为一个DispatchRequest对象并返回
             return new DispatchRequest(
                     topic,
                     queueId,
