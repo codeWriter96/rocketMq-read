@@ -51,12 +51,16 @@ public class ConsumeQueue {
     private volatile long minLogicOffset = 0;
     private ConsumeQueueExt consumeQueueExt = null;
 
+    //ConsumeQueue文件可以看成是基于topic的commitlog索引文件
+    //路径 $HOME/store/consumequeue/{topic}/{queueId}/{fileName}
     public ConsumeQueue(
         final String topic,
         final int queueId,
         final String storePath,
         final int mappedFileSize,
         final DefaultMessageStore defaultMessageStore) {
+
+        //属性赋值
         this.storePath = storePath;
         this.mappedFileSize = mappedFileSize;
         this.defaultMessageStore = defaultMessageStore;
@@ -64,10 +68,12 @@ public class ConsumeQueue {
         this.topic = topic;
         this.queueId = queueId;
 
+        //queue的路径 $HOME/store/consumequeue/{topic}/{queueId}/{fileName}
         String queueDir = this.storePath
             + File.separator + topic
             + File.separator + queueId;
 
+        //创建mappedFileQueue，内部保存在该queueId下面的所有的consumeQueue文件集合
         this.mappedFileQueue = new MappedFileQueue(queueDir, mappedFileSize, null);
 
         this.byteBufferIndex = ByteBuffer.allocate(CQ_STORE_UNIT_SIZE);
@@ -384,10 +390,15 @@ public class ConsumeQueue {
     }
 
     public void putMessagePositionInfoWrapper(DispatchRequest request, boolean multiQueue) {
+        //最大重试次数
         final int maxRetries = 30;
+        //ConsumeQueue是否可用
         boolean canWrite = this.defaultMessageStore.getRunningFlags().isCQWriteable();
+        //如果文件可写，并且重试次数小于30次，那么写入ConsumeQueue索引
         for (int i = 0; i < maxRetries && canWrite; i++) {
+            //请求的tagsCode
             long tagsCode = request.getTagsCode();
+            //如果支持扩展信息写入，默认false
             if (isExtWriteEnable()) {
                 ConsumeQueueExt.CqExtUnit cqExtUnit = new ConsumeQueueExt.CqExtUnit();
                 cqExtUnit.setFilterBitMap(request.getBitMap());
@@ -402,11 +413,15 @@ public class ConsumeQueue {
                         topic, queueId, request.getCommitLogOffset());
                 }
             }
+            //写入消息到ConsumeQueue
             boolean result = this.putMessagePositionInfo(request.getCommitLogOffset(),
                 request.getMsgSize(), tagsCode, request.getConsumeQueueOffset());
+            //如果成功
             if (result) {
+                //从机 或 开启了DLeger
                 if (this.defaultMessageStore.getMessageStoreConfig().getBrokerRole() == BrokerRole.SLAVE ||
                     this.defaultMessageStore.getMessageStoreConfig().isEnableDLegerCommitLog()) {
+                    //修改StoreCheckpoint中的physicMsgTimestamp：最新commitlog文件的刷盘时间戳，单位毫秒
                     this.defaultMessageStore.getStoreCheckpoint().setPhysicMsgTimestamp(request.getStoreTimestamp());
                 }
                 this.defaultMessageStore.getStoreCheckpoint().setLogicsMsgTimestamp(request.getStoreTimestamp());
@@ -481,32 +496,46 @@ public class ConsumeQueue {
     private boolean putMessagePositionInfo(final long offset, final int size, final long tagsCode,
         final long cqOffset) {
 
+        //文件已经写入过了
         if (offset + size <= this.maxPhysicOffset) {
             log.warn("Maybe try to build consume queue repeatedly maxPhysicOffset={} phyOffset={}", maxPhysicOffset, offset);
             return true;
         }
 
+        //写变成读
         this.byteBufferIndex.flip();
+        //缓冲区限制20byte
         this.byteBufferIndex.limit(CQ_STORE_UNIT_SIZE);
+        //存入8个字节长度的offset，消息在CommitLog中的物理偏移量
         this.byteBufferIndex.putLong(offset);
+        //存入4个字节长度的size，消息大小
         this.byteBufferIndex.putInt(size);
+        //存入8个字节长度的tagsCode，延迟消息就是消息投递时间，其他消息就是消息的tags的hashCode
         this.byteBufferIndex.putLong(tagsCode);
 
         final long expectLogicOffset = cqOffset * CQ_STORE_UNIT_SIZE;
-
+        //ConsumeQueue一个文件对应----------------一个mappedFile（内存映射）
+        //根据偏移量获取将要写入的最新ConsumeQueue文件的MappedFile
         MappedFile mappedFile = this.mappedFileQueue.getLastMappedFile(expectLogicOffset);
         if (mappedFile != null) {
 
+            //如果mappedFile是第一个创建的消费队列，并且消息在消费队列的偏移量不为0，并且消费队列写入指针为0
+            //那么表示消费索引数据错误，需要重设索引信息
             if (mappedFile.isFirstCreateInQueue() && cqOffset != 0 && mappedFile.getWrotePosition() == 0) {
+                //设置最小偏移量为预计偏移量
                 this.minLogicOffset = expectLogicOffset;
+                //设置刷盘最新位置，提交的最新位置
                 this.mappedFileQueue.setFlushedWhere(expectLogicOffset);
                 this.mappedFileQueue.setCommittedWhere(expectLogicOffset);
+                //对该ConsumeQueue文件expectLogicOffset之前的位置填充0
                 this.fillPreBlank(mappedFile, expectLogicOffset);
                 log.info("fill pre blank space " + mappedFile.getFileName() + " " + expectLogicOffset + " "
                     + mappedFile.getWrotePosition());
             }
 
+            //如果消息在消费队列的偏移量不为0，即此前有数据
             if (cqOffset != 0) {
+                //获取当前ConsumeQueue文件最新已写入物理偏移量
                 long currentLogicOffset = mappedFile.getWrotePosition() + mappedFile.getFileFromOffset();
 
                 if (expectLogicOffset < currentLogicOffset) {

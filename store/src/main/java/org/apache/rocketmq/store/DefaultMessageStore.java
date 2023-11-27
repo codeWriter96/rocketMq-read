@@ -1238,9 +1238,12 @@ public class DefaultMessageStore implements MessageStore {
     }
 
     public ConsumeQueue findConsumeQueue(String topic, int queueId) {
+        //topic
         ConcurrentMap<Integer, ConsumeQueue> map = consumeQueueTable.get(topic);
+        //如果队列为null，则创建新队列，惰性创建
         if (null == map) {
             ConcurrentMap<Integer, ConsumeQueue> newMap = new ConcurrentHashMap<Integer, ConsumeQueue>(128);
+            //防止：别的线程也在添加到队列，并添加成功了
             ConcurrentMap<Integer, ConsumeQueue> oldMap = consumeQueueTable.putIfAbsent(topic, newMap);
             if (oldMap != null) {
                 map = oldMap;
@@ -1249,6 +1252,7 @@ public class DefaultMessageStore implements MessageStore {
             }
         }
 
+        //logicQueue
         ConsumeQueue logic = map.get(queueId);
         if (null == logic) {
             ConsumeQueue newLogic = new ConsumeQueue(
@@ -1257,6 +1261,7 @@ public class DefaultMessageStore implements MessageStore {
                 StorePathConfigHelper.getStorePathConsumeQueue(this.messageStoreConfig.getStorePathRootDir()),
                 this.getMessageStoreConfig().getMappedFileSizeConsumeQueue(),
                 this);
+            //防止：别的线程也在添加到队列，并添加成功了
             ConsumeQueue oldLogic = map.putIfAbsent(queueId, newLogic);
             if (oldLogic != null) {
                 logic = oldLogic;
@@ -1545,8 +1550,11 @@ public class DefaultMessageStore implements MessageStore {
         }
     }
 
+    //将消息信息追加到ConsumeQueue索引文件中
     public void putMessagePositionInfo(DispatchRequest dispatchRequest) {
+        //找到消息队列
         ConsumeQueue cq = this.findConsumeQueue(dispatchRequest.getTopic(), dispatchRequest.getQueueId());
+        //将消息信息追加到ConsumeQueue索引文件中
         cq.putMessagePositionInfoWrapper(dispatchRequest, checkMultiDispatchQueue(dispatchRequest));
     }
 
