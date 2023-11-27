@@ -513,6 +513,7 @@ public class ConsumeQueue {
         //存入8个字节长度的tagsCode，延迟消息就是消息投递时间，其他消息就是消息的tags的hashCode
         this.byteBufferIndex.putLong(tagsCode);
 
+        //队列期望的绝对偏移量
         final long expectLogicOffset = cqOffset * CQ_STORE_UNIT_SIZE;
         //ConsumeQueue一个文件对应----------------一个mappedFile（内存映射）
         //根据偏移量获取将要写入的最新ConsumeQueue文件的MappedFile
@@ -535,15 +536,17 @@ public class ConsumeQueue {
 
             //如果消息在消费队列的偏移量不为0，即此前有数据
             if (cqOffset != 0) {
-                //获取当前ConsumeQueue文件最新已写入物理偏移量
+                //获取当前ConsumeQueue文件最新已写入物理绝对偏移量
                 long currentLogicOffset = mappedFile.getWrotePosition() + mappedFile.getFileFromOffset();
 
+                //期望绝对偏移量 < 已写入绝对偏移量 -> 表示当前索引早已经写入
                 if (expectLogicOffset < currentLogicOffset) {
                     log.warn("Build  consume queue repeatedly, expectLogicOffset: {} currentLogicOffset: {} Topic: {} QID: {} Diff: {}",
                         expectLogicOffset, currentLogicOffset, this.topic, this.queueId, expectLogicOffset - currentLogicOffset);
                     return true;
                 }
 
+                //如果不相等，表示存在写入错误，正常情况下，两个值应该相等，因为一个索引条目固定大小20B
                 if (expectLogicOffset != currentLogicOffset) {
                     LOG_ERROR.warn(
                         "[BUG]logic queue order maybe wrong, expectLogicOffset: {} currentLogicOffset: {} Topic: {} QID: {} Diff: {}",
@@ -555,7 +558,9 @@ public class ConsumeQueue {
                     );
                 }
             }
+            //更新消息最大物理偏移量 = 消息在CommitLog中的物理偏移量 + 消息的大小
             this.maxPhysicOffset = offset + size;
+            //追加到对应的mappedByteBuffer中，并没有立即刷盘
             return mappedFile.appendMessage(this.byteBufferIndex.array());
         }
         return false;

@@ -40,6 +40,9 @@ public class MappedFileQueue {
 
     protected final int mappedFileSize;
 
+    //采用CopyOnWriteArrayList存放mappedFiles，从而形成MappedFileQueue
+    //CopyOnWriteArrayList容器允许并发读，读操作是无锁的，性能较高。
+    //至于写操作，比如向容器中添加一个元素，则首先将当前容器复制一份，然后在新副本上执行写操作，结束之后再将原容器的引用指向新容器。
     protected final CopyOnWriteArrayList<MappedFile> mappedFiles = new CopyOnWriteArrayList<MappedFile>();
 
     private final AllocateMappedFileService allocateMappedFileService;

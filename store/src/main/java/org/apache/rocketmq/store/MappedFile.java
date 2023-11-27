@@ -241,10 +241,12 @@ public class MappedFile extends ReferenceResource {
             try {
                 ByteBuffer buf = this.mappedByteBuffer.slice();
                 buf.position(currentPos);
+                //仅仅写入ByteBuffer中，并没有立即刷盘
                 buf.put(data);
             } catch (Throwable e) {
                 log.error("Error occurred when append message to mappedFile.", e);
             }
+            //更新写入位置
             this.wrotePosition.addAndGet(data.length);
             return true;
         }

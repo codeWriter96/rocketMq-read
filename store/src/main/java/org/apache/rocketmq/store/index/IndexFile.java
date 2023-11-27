@@ -36,13 +36,18 @@ public class IndexFile {
     private final int indexNum;
     private final MappedFile mappedFile;
     private final FileChannel fileChannel;
+    //使用DirectByteBuffer堆外内存技术
     private final MappedByteBuffer mappedByteBuffer;
     private final IndexHeader indexHeader;
 
     public IndexFile(final String fileName, final int hashSlotNum, final int indexNum,
         final long endPhyOffset, final long endTimestamp) throws IOException {
+
+        //文件大小，默认约400M左右
+        //40B 头数据 + 500w * 4B hashslot + 2000w * 20B index
         int fileTotalSize =
             IndexHeader.INDEX_HEADER_SIZE + (hashSlotNum * hashSlotSize) + (indexNum * indexSize);
+
         this.mappedFile = new MappedFile(fileName, fileTotalSize);
         this.fileChannel = this.mappedFile.getFileChannel();
         this.mappedByteBuffer = this.mappedFile.getMappedByteBuffer();

@@ -43,7 +43,10 @@ public class IndexService {
     private final int hashSlotNum;
     private final int indexNum;
     private final String storePath;
+    //采用ArrayList存放IndexFile
+    //为什么不用CopyOnWriteArrayList？？？
     private final ArrayList<IndexFile> indexFileList = new ArrayList<IndexFile>();
+    //读写锁
     private final ReadWriteLock readWriteLock = new ReentrantReadWriteLock();
 
     public IndexService(final DefaultMessageStore store) {
@@ -268,7 +271,9 @@ public class IndexService {
     public IndexFile retryGetAndCreateIndexFile() {
         IndexFile indexFile = null;
 
+        //最多重试 3 次
         for (int times = 0; null == indexFile && times < MAX_TRY_IDX_CREATE; times++) {
+            //创建索引文件
             indexFile = this.getAndCreateLastIndexFile();
             if (null != indexFile)
                 break;
@@ -282,6 +287,7 @@ public class IndexService {
         }
 
         if (null == indexFile) {
+            //标记indexFile异常
             this.defaultMessageStore.getAccessRights().makeIndexFileError();
             log.error("Mark index file cannot build flag");
         }
@@ -296,14 +302,21 @@ public class IndexService {
         long lastUpdateIndexTimestamp = 0;
 
         {
+            //读锁
             this.readWriteLock.readLock().lock();
+            //如果indexFileList不为空
+            //使用一个数组来放置索引文件
             if (!this.indexFileList.isEmpty()) {
+                //尝试获取最后一个IndexFile
                 IndexFile tmp = this.indexFileList.get(this.indexFileList.size() - 1);
                 if (!tmp.isWriteFull()) {
+                    //没有写满，则当前 = 最后一个IndexFile文件
                     indexFile = tmp;
                 } else {
+                    //写满了
                     lastUpdateEndPhyOffset = tmp.getEndPhyOffset();
                     lastUpdateIndexTimestamp = tmp.getEndTimestamp();
+                    //则 前置节点 = 最后一个IndexFile文件
                     prevIndexFile = tmp;
                 }
             }
@@ -313,12 +326,15 @@ public class IndexService {
 
         if (indexFile == null) {
             try {
+                //获取完整文件名$HOME/store/index${fileName}，fileName是以创建时的时间戳命名的，精确到毫秒
                 String fileName =
                     this.storePath + File.separator
                         + UtilAll.timeMillisToHumanString(System.currentTimeMillis());
+                //新建indexFile
                 indexFile =
                     new IndexFile(fileName, this.hashSlotNum, this.indexNum, lastUpdateEndPhyOffset,
                         lastUpdateIndexTimestamp);
+                //lock放在try里面？？？
                 this.readWriteLock.writeLock().lock();
                 this.indexFileList.add(indexFile);
             } catch (Exception e) {
@@ -327,8 +343,10 @@ public class IndexService {
                 this.readWriteLock.writeLock().unlock();
             }
 
+            //创建了新的文件之后，尝试将上一个文件刷盘
             if (indexFile != null) {
                 final IndexFile flushThisFile = prevIndexFile;
+                //新开一个线程，异步的对上一个IndexFile文件刷盘
                 Thread flushThread = new Thread(new Runnable() {
                     @Override
                     public void run() {
@@ -336,6 +354,7 @@ public class IndexService {
                     }
                 }, "FlushIndexFileThread");
 
+                //置为守护线程
                 flushThread.setDaemon(true);
                 flushThread.start();
             }
