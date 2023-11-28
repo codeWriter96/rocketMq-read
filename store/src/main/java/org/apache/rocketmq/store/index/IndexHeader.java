@@ -21,7 +21,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class IndexHeader {
+    //IndexHeader的大小，40b
     public static final int INDEX_HEADER_SIZE = 40;
+
     private static int beginTimestampIndex = 0;
     private static int endTimestampIndex = 8;
     private static int beginPhyoffsetIndex = 16;
@@ -29,12 +31,18 @@ public class IndexHeader {
     private static int hashSlotcountIndex = 32;
     private static int indexCountIndex = 36;
     private final ByteBuffer byteBuffer;
-    private AtomicLong beginTimestamp = new AtomicLong(0);
-    private AtomicLong endTimestamp = new AtomicLong(0);
-    private AtomicLong beginPhyOffset = new AtomicLong(0);
-    private AtomicLong endPhyOffset = new AtomicLong(0);
-    private AtomicInteger hashSlotCount = new AtomicInteger(0);
 
+    //8b的当前索引文件存储的第一条索引对应的消息的存储时间
+    private AtomicLong beginTimestamp = new AtomicLong(0);
+    //8b的当前索引文件存储的最后一条索引对应的消息的存储时间
+    private AtomicLong endTimestamp = new AtomicLong(0);
+    //8b索引文件存储的第一条索引对应的消息在commitlog中的绝对物理偏移量
+    private AtomicLong beginPhyOffset = new AtomicLong(0);
+    //8b索引文件存储的最后一条索引对应的消息在commitlog中的绝对物理偏移量
+    private AtomicLong endPhyOffset = new AtomicLong(0);
+    //4b的哈希槽计数
+    private AtomicInteger hashSlotCount = new AtomicInteger(0);
+    //4b的索引条目计数
     private AtomicInteger indexCount = new AtomicInteger(1);
 
     public IndexHeader(final ByteBuffer byteBuffer) {

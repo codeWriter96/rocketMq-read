@@ -40,7 +40,9 @@ public class IndexService {
      */
     private static final int MAX_TRY_IDX_CREATE = 3;
     private final DefaultMessageStore defaultMessageStore;
+    //默认5000_000 5百万大小
     private final int hashSlotNum;
+    //默认maxIndexNum = 5000_000 * 4;两千万条
     private final int indexNum;
     private final String storePath;
     //采用ArrayList存放IndexFile
@@ -49,6 +51,7 @@ public class IndexService {
     //读写锁
     private final ReadWriteLock readWriteLock = new ReentrantReadWriteLock();
 
+    //初始化
     public IndexService(final DefaultMessageStore store) {
         this.defaultMessageStore = store;
         this.hashSlotNum = store.getMessageStoreConfig().getMaxHashSlotNum();
@@ -197,6 +200,7 @@ public class IndexService {
         return new QueryOffsetResult(phyOffsets, indexLastUpdateTimestamp, indexLastUpdatePhyoffset);
     }
 
+    //topic + "#" + key构建索引
     private String buildKey(final String topic, final String key) {
         return topic + "#" + key;
     }
@@ -208,6 +212,8 @@ public class IndexService {
             DispatchRequest msg = req;
             String topic = msg.getTopic();
             String keys = msg.getKeys();
+            //如果消息在commitlog中的偏移量小于该文件的结束索引在commitlog中的偏移量，那么表示已为该消息之后的消息构建Index索引
+            //此时直接返回，不需要创建索引
             if (msg.getCommitLogOffset() < endPhyOffset) {
                 return;
             }
@@ -218,10 +224,13 @@ public class IndexService {
                 case MessageSysFlag.TRANSACTION_PREPARED_TYPE:
                 case MessageSysFlag.TRANSACTION_COMMIT_TYPE:
                     break;
+                //如果是事务回滚消息，则直接返回，不需要创建索引
                 case MessageSysFlag.TRANSACTION_ROLLBACK_TYPE:
                     return;
             }
 
+            //获取客户端生成的uniqId，也被称为msgId，从逻辑上代表客户端生成的唯一一条消息
+            //如果uniqId不为null，那么为uniqId构建索引（构建主键索引）
             if (req.getUniqKey() != null) {
                 indexFile = putKey(indexFile, msg, buildKey(topic, req.getUniqKey()));
                 if (indexFile == null) {
@@ -230,8 +239,12 @@ public class IndexService {
                 }
             }
 
+            //获取客户端传递的keys
+            //如果keys不为空，那么为keys中的每一个key构建索引（构建普通索引）
             if (keys != null && keys.length() > 0) {
+                //根据空格拆分keys成keyset
                 String[] keyset = keys.split(MessageConst.KEY_SEPARATOR);
+                //构建客户端传递的keys索引
                 for (int i = 0; i < keyset.length; i++) {
                     String key = keyset[i];
                     if (key.length() > 0) {

@@ -970,6 +970,7 @@ public class DefaultMessageStore implements MessageStore {
     }
 
     @Override
+    //根据Key查询消息
     public QueryMessageResult queryMessage(String topic, String key, int maxNum, long begin, long end) {
         QueryMessageResult queryMessageResult = new QueryMessageResult();
 

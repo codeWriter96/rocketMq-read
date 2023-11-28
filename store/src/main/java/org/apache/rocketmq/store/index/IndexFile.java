@@ -27,17 +27,20 @@ import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.logging.InternalLoggerFactory;
 import org.apache.rocketmq.store.MappedFile;
 
+//Index是类似HashMap实现。hashSlotNum为key的数量，indexNum是单个hashSlot中链表的最大长度
 public class IndexFile {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
     private static int hashSlotSize = 4;
     private static int indexSize = 20;
     private static int invalidIndex = 0;
+
     private final int hashSlotNum;
     private final int indexNum;
     private final MappedFile mappedFile;
     private final FileChannel fileChannel;
     //使用DirectByteBuffer堆外内存技术
     private final MappedByteBuffer mappedByteBuffer;
+    //全局参数
     private final IndexHeader indexHeader;
 
     public IndexFile(final String fileName, final int hashSlotNum, final int indexNum,
@@ -50,6 +53,7 @@ public class IndexFile {
 
         this.mappedFile = new MappedFile(fileName, fileTotalSize);
         this.fileChannel = this.mappedFile.getFileChannel();
+        //堆外内存
         this.mappedByteBuffer = this.mappedFile.getMappedByteBuffer();
         this.hashSlotNum = hashSlotNum;
         this.indexNum = indexNum;
@@ -94,6 +98,8 @@ public class IndexFile {
         return this.mappedFile.destroy(intervalForcibly);
     }
 
+    //写入索引（存储时，key的值被转化成keyHash值存入文件中，具体key值被抛弃，因此可能查询出多条hash冲突结果）
+    //https://blog.csdn.net/weixin_43767015/article/details/127561251
     public boolean putKey(final String key, final long phyOffset, final long storeTimestamp) {
         if (this.indexHeader.getIndexCount() < this.indexNum) {
             int keyHash = indexKeyHashMethod(key);
@@ -127,9 +133,13 @@ public class IndexFile {
                     IndexHeader.INDEX_HEADER_SIZE + this.hashSlotNum * hashSlotSize
                         + this.indexHeader.getIndexCount() * indexSize;
 
+                //4b的keyHash（在absIndexPos位置，放置keyHash）
                 this.mappedByteBuffer.putInt(absIndexPos, keyHash);
+                //8b的phyOffset
                 this.mappedByteBuffer.putLong(absIndexPos + 4, phyOffset);
+                //4b的timeDiff
                 this.mappedByteBuffer.putInt(absIndexPos + 4 + 8, (int) timeDiff);
+                //4b的上一个发生hash冲突的索引条目的编号
                 this.mappedByteBuffer.putInt(absIndexPos + 4 + 8 + 4, slotValue);
 
                 this.mappedByteBuffer.putInt(absSlotPos, this.indexHeader.getIndexCount());
@@ -193,6 +203,7 @@ public class IndexFile {
         return result;
     }
 
+    //根据key查询消息
     public void selectPhyOffset(final List<Long> phyOffsets, final String key, final int maxNum,
         final long begin, final long end, boolean lock) {
         if (this.mappedFile.hold()) {
