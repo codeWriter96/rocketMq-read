@@ -1,0 +1,3 @@
+Consumer阅读。
+
+RocketMq的Consumer是pull模式，主动从Broker中拉取消息

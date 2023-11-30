@@ -35,7 +35,11 @@ public class Consumer {
         /*
          * Instantiate with specified consumer group name.
          */
+        //推送的Consumer
+        //pull模式，主动从Broker中拉取消息
         DefaultMQPushConsumer consumer = new DefaultMQPushConsumer("please_rename_unique_group_name_4");
+        //nameServer地址
+        consumer.setNamesrvAddr("127.0.0.1:9876");
 
         /*
          * Specify name server addresses.
@@ -57,11 +61,13 @@ public class Consumer {
         /*
          * Subscribe one more topic to consume.
          */
+        //订阅主题+订阅消息类型过滤表达式（支持TAG和SQL92两种类型）
         consumer.subscribe("TopicTest", "*");
 
         /*
          *  Register callback to execute on arrival of messages fetched from brokers.
          */
+        //注册MessageListener
         consumer.registerMessageListener(new MessageListenerConcurrently() {
 
             @Override
@@ -75,6 +81,7 @@ public class Consumer {
         /*
          *  Launch the consumer instance.
          */
+        //启动
         consumer.start();
 
         System.out.printf("Consumer Started.%n");

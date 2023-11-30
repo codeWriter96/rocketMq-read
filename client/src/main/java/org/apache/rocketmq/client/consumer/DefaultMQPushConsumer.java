@@ -61,6 +61,7 @@ import org.apache.rocketmq.remoting.exception.RemotingException;
  * <strong>Thread Safety:</strong> After initialization, the instance can be regarded as thread-safe.
  * </p>
  */
+//最常用的消费者模型
 public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsumer {
 
     private final InternalLogger log = ClientLogger.getLog();
@@ -327,10 +328,10 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
     /**
      * Constructor specifying namespace, consumer group, RPC hook and message queue allocating algorithm.
      *
-     * @param namespace Namespace for this MQ Producer instance.
-     * @param consumerGroup Consume queue.
-     * @param rpcHook RPC hook to execute before each remoting command.
-     * @param allocateMessageQueueStrategy Message queue allocating algorithm.
+     * @param namespace Namespace for this MQ Producer instance.  命名空间，用于Producer在Topic之上再进行区分管理（类似profile功能）
+     * @param consumerGroup Consume queue.                        消费者组(对消费者进行分组管理)
+     * @param rpcHook RPC hook to execute before each remoting command. 在每个远程处理命令之前执行的RPC钩子
+     * @param allocateMessageQueueStrategy Message queue allocating algorithm.   消费者之间消息分配的策略算法
      */
     public DefaultMQPushConsumer(final String namespace, final String consumerGroup, RPCHook rpcHook,
         AllocateMessageQueueStrategy allocateMessageQueueStrategy) {
@@ -703,8 +704,11 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
      */
     @Override
     public void start() throws MQClientException {
+        //设置消费者组
         setConsumerGroup(NamespaceUtil.wrapNamespace(this.getNamespace(), this.consumerGroup));
+        //启动默认消费者实现类
         this.defaultMQPushConsumerImpl.start();
+        //消息轨迹跟踪服务，默认null
         if (null != traceDispatcher) {
             try {
                 traceDispatcher.start(this.getNamesrvAddr(), this.getAccessChannel());
@@ -764,6 +768,8 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
      */
     @Override
     public void subscribe(String topic, String subExpression) throws MQClientException {
+        //调用defaultMQPushConsumerImpl的subscribe方法
+        //topic包了一层Namespace
         this.defaultMQPushConsumerImpl.subscribe(withNamespace(topic), subExpression);
     }
 
