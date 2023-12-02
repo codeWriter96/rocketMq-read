@@ -144,6 +144,7 @@ public class MQClientInstance {
 
         this.pullMessageService = new PullMessageService(this);
 
+
         this.rebalanceService = new RebalanceService(this);
 
         this.defaultMQProducer = new DefaultMQProducer(MixAll.CLIENT_INNER_PRODUCER_GROUP);

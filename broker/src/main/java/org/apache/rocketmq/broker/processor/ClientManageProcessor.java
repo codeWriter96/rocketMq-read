@@ -43,6 +43,7 @@ import org.apache.rocketmq.remoting.netty.NettyRequestProcessor;
 import org.apache.rocketmq.remoting.netty.AsyncNettyRequestProcessor;
 import org.apache.rocketmq.remoting.protocol.RemotingCommand;
 
+//客户端管理处理，主要包括：接收客户端心跳、去注册客户端、检查客户端配置
 public class ClientManageProcessor extends AsyncNettyRequestProcessor implements NettyRequestProcessor {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
     private final BrokerController brokerController;
@@ -51,11 +52,13 @@ public class ClientManageProcessor extends AsyncNettyRequestProcessor implements
         this.brokerController = brokerController;
     }
 
+    //接收客户端心跳
     @Override
     public RemotingCommand processRequest(ChannelHandlerContext ctx, RemotingCommand request)
         throws RemotingCommandException {
         switch (request.getCode()) {
             case RequestCode.HEART_BEAT:
+                //处理心跳
                 return this.heartBeat(ctx, request);
             case RequestCode.UNREGISTER_CLIENT:
                 return this.unregisterClient(ctx, request);
@@ -73,8 +76,11 @@ public class ClientManageProcessor extends AsyncNettyRequestProcessor implements
     }
 
     public RemotingCommand heartBeat(ChannelHandlerContext ctx, RemotingCommand request) {
+        //构建response
         RemotingCommand response = RemotingCommand.createResponseCommand(null);
+        //解码成heartbeatData
         HeartbeatData heartbeatData = HeartbeatData.decode(request.getBody(), HeartbeatData.class);
+        //构建客户端连接信息对象
         ClientChannelInfo clientChannelInfo = new ClientChannelInfo(
             ctx.channel(),
             heartbeatData.getClientID(),
@@ -82,24 +88,36 @@ public class ClientManageProcessor extends AsyncNettyRequestProcessor implements
             request.getVersion()
         );
 
+        //循环处理消费者信息
         for (ConsumerData data : heartbeatData.getConsumerDataSet()) {
+            //根据GroupName查找broker缓存内的当前GroupName的订阅组配置
             SubscriptionGroupConfig subscriptionGroupConfig =
                 this.brokerController.getSubscriptionGroupManager().findSubscriptionGroupConfig(
                     data.getGroupName());
+            //当consumer发生改变的时候是否支持通知同组的所有consumer
             boolean isNotifyConsumerIdsChangedEnable = true;
+            //当前GroupName存在订阅配置
             if (null != subscriptionGroupConfig) {
+                //当consumer发生改变的时候是否支持通知同组的所有consumer，默认true，即支持
                 isNotifyConsumerIdsChangedEnable = subscriptionGroupConfig.isNotifyConsumerIdsChangedEnable();
                 int topicSysFlag = 0;
                 if (data.isUnitMode()) {
                     topicSysFlag = TopicSysFlag.buildSysFlag(false, true);
                 }
+                //构建重试topic
+                //也就是不管DefaultMQPushConsumer中的MessageModel消息消费策略是啥，broker都会创建RetryTopic
                 String newTopic = MixAll.getRetryTopic(data.getGroupName());
+                //设置重试topic的消息发送方式
                 this.brokerController.getTopicConfigManager().createTopicInSendMessageBackMethod(
                     newTopic,
                     subscriptionGroupConfig.getRetryQueueNums(),
                     PermName.PERM_WRITE | PermName.PERM_READ, topicSysFlag);
             }
 
+            /*
+             * 注册consumer，返回consumer信息是否已发生改变
+             * 如果发生了改变，Broker会发送NOTIFY_CONSUMER_IDS_CHANGED请求给同组的所有consumer客户端，要求进行重平衡操作
+             */
             boolean changed = this.brokerController.getConsumerManager().registerConsumer(
                 data.getGroupName(),
                 clientChannelInfo,
@@ -118,6 +136,7 @@ public class ClientManageProcessor extends AsyncNettyRequestProcessor implements
             }
         }
 
+        //循环遍历处理producerDataSet，即处理producer的心跳信息
         for (ProducerData data : heartbeatData.getProducerDataSet()) {
             this.brokerController.getProducerManager().registerProducer(data.getGroupName(),
                 clientChannelInfo);

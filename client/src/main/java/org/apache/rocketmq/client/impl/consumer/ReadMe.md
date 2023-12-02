@@ -1,0 +1,7 @@
+RebalanceService触发Rebalance的条件：
+1、RebalanceService服务是一个线程任务，由MQClientInstance启动，其每隔20s自动进行一次自动负载均衡。
+2、Broker触发的重平衡：
+    -Broker收到心跳请求之后如果发现消息中有新的consumer连接或者consumer订阅了新的topic或者移除了topic的订阅， 
+        则Broker发送Code为NOTIFY_CONSUMER_IDS_CHANGED的请求给该group下面的所有Consumer，要求进行一次负载均衡。
+    -如果某个客户端连接出现连接异常事件EXCEPTION、连接断开事件CLOSE、或者连接闲置事件IDLE，则Broker同样会发送重平衡请求给消费者组下面的所有消费者。
+3、新的Consumer服务启动的时候，主动调用rebalanceImmediately唤醒负载均衡服务rebalanceService，进行重平衡。

@@ -120,7 +120,9 @@ public class ConsumerGroupInfo {
         this.messageModel = messageModel;
         this.consumeFromWhere = consumeFromWhere;
 
+        //缓存中获取连接信息
         ClientChannelInfo infoOld = this.channelInfoTable.get(infoNew.getChannel());
+        //null表示新连接
         if (null == infoOld) {
             ClientChannelInfo prev = this.channelInfoTable.put(infoNew.getChannel(), infoNew);
             if (null == prev) {
@@ -131,6 +133,7 @@ public class ConsumerGroupInfo {
 
             infoOld = infoNew;
         } else {
+            //异常情况
             if (!infoOld.getClientId().equals(infoNew.getClientId())) {
                 log.error("[BUG] consumer channel exist in broker, but clientId not equal. GROUP: {} OLD: {} NEW: {} ",
                     this.groupName,
@@ -140,12 +143,14 @@ public class ConsumerGroupInfo {
             }
         }
 
+        //更新更新时间
         this.lastUpdateTimestamp = System.currentTimeMillis();
         infoOld.setLastUpdateTimestamp(this.lastUpdateTimestamp);
 
         return updated;
     }
 
+    //更新主题订阅
     public boolean updateSubscription(final Set<SubscriptionData> subList) {
         boolean updated = false;
 

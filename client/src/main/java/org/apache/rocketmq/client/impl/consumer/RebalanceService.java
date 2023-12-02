@@ -21,7 +21,10 @@ import org.apache.rocketmq.client.log.ClientLogger;
 import org.apache.rocketmq.common.ServiceThread;
 import org.apache.rocketmq.logging.InternalLogger;
 
+//ServiceThread。一看就是需要间隔重复执行的线程
+//重新负载均衡线程。由MQClientInstance处启动
 public class RebalanceService extends ServiceThread {
+    //20s 的间隔时间，自动进行一次自动负载均衡
     private static long waitInterval =
         Long.parseLong(System.getProperty(
             "rocketmq.client.rebalance.waitInterval", "20000"));
