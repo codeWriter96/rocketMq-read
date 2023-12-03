@@ -112,7 +112,7 @@ public class ConsumerManager {
         boolean r1 =
             consumerGroupInfo.updateChannel(clientChannelInfo, consumeType, messageModel,
                 consumeFromWhere);
-        //更新订阅信息
+        //更新subscriptionTable的订阅信息
         boolean r2 = consumerGroupInfo.updateSubscription(subList);
 
         //如果连接或者订阅信息有更新，并且允许通知，那么通知该consumergroup中的所有consumer进行重平衡

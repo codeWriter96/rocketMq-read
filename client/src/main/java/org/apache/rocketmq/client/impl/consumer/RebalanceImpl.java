@@ -214,12 +214,16 @@ public abstract class RebalanceImpl {
         }
     }
 
+    //重新平衡
     public void doRebalance(final boolean isOrder) {
+        //获取消费者组下的订阅信息
         Map<String, SubscriptionData> subTable = this.getSubscriptionInner();
         if (subTable != null) {
             for (final Map.Entry<String, SubscriptionData> entry : subTable.entrySet()) {
+                //获取topic
                 final String topic = entry.getKey();
                 try {
+                    //对该topic进行负载均衡
                     this.rebalanceByTopic(topic, isOrder);
                 } catch (Throwable e) {
                     if (!topic.startsWith(MixAll.RETRY_GROUP_TOPIC_PREFIX)) {
@@ -229,6 +233,7 @@ public abstract class RebalanceImpl {
             }
         }
 
+        //丢弃不属于当前消费者订阅的topic的队列快照ProcessQueue
         this.truncateMessageQueueNotMyTopic();
     }
 

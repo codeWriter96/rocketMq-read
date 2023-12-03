@@ -150,21 +150,33 @@ public class ConsumerGroupInfo {
         return updated;
     }
 
-    //更新主题订阅
+    /**
+     * 更新主题订阅
+     * @param subList 当前groupName下所有的订阅信息
+     * @return
+     */
     public boolean updateSubscription(final Set<SubscriptionData> subList) {
         boolean updated = false;
 
+        //遍历订阅信息集合
+        //用于判断consumer中是否新增了topic订阅信息
         for (SubscriptionData sub : subList) {
+            //从缓存中获取Topic的订阅信息
             SubscriptionData old = this.subscriptionTable.get(sub.getTopic());
+            //如果订阅为空，说明是新增的Topic
             if (old == null) {
+                //放入缓存
                 SubscriptionData prev = this.subscriptionTable.putIfAbsent(sub.getTopic(), sub);
+                //通知消费者，需要重新负载均衡
                 if (null == prev) {
                     updated = true;
                     log.info("subscription changed, add new topic, group: {} {}",
                         this.groupName,
                         sub.toString());
                 }
-            } else if (sub.getSubVersion() > old.getSubVersion()) {
+            }
+            //订阅不为空,且consumer中版本号>缓存的版本号
+            else if (sub.getSubVersion() > old.getSubVersion()) {
                 if (this.consumeType == ConsumeType.CONSUME_PASSIVELY) {
                     log.info("subscription changed, group: {} OLD: {} NEW: {}",
                         this.groupName,
@@ -173,13 +185,17 @@ public class ConsumerGroupInfo {
                     );
                 }
 
+                //更新
                 this.subscriptionTable.put(sub.getTopic(), sub);
             }
         }
 
+        //遍历ConsumerGroup的subscriptionTable缓存
         Iterator<Entry<String, SubscriptionData>> it = this.subscriptionTable.entrySet().iterator();
+        //用于判断consumer中是否移除了topic订阅信息
         while (it.hasNext()) {
             Entry<String, SubscriptionData> next = it.next();
+            //broker的缓存中的oldTopic
             String oldTopic = next.getKey();
 
             boolean exist = false;
@@ -190,6 +206,7 @@ public class ConsumerGroupInfo {
                 }
             }
 
+            //如果不存在，则表示consumer中移除了oldTopic的订阅信息
             if (!exist) {
                 log.warn("subscription changed, group: {} remove topic {} {}",
                     this.groupName,
@@ -197,11 +214,14 @@ public class ConsumerGroupInfo {
                     next.getValue().toString()
                 );
 
+                //从缓存中移除
                 it.remove();
+                //通知消费者，需要重新负载均衡
                 updated = true;
             }
         }
 
+        //修改更新时间
         this.lastUpdateTimestamp = System.currentTimeMillis();
 
         return updated;
