@@ -1027,15 +1027,20 @@ public class MQClientInstance {
         return 0;
     }
 
+    //获取topic + consumerGroup下所有的clientId集合，即消费者客户端id集合
+    //此处可知：一个consumerGroup只能订阅一个topic
     public List<String> findConsumerIdList(final String topic, final String group) {
+        //根据topic从本地缓存随机选择一个Broker的地址
         String brokerAddr = this.findBrokerAddrByTopic(topic);
         if (null == brokerAddr) {
+            //如果本地缓存为null，则从NameServer中获取，并更新本地缓存
             this.updateTopicRouteInfoFromNameServer(topic);
             brokerAddr = this.findBrokerAddrByTopic(topic);
         }
 
         if (null != brokerAddr) {
             try {
+                //根据brokerAddr和consumerGroup 从Broker中得到消费者客户端id列表
                 return this.mQClientAPIImpl.getConsumerIdListByGroup(brokerAddr, group, clientConfig.getMqClientApiTimeout());
             } catch (Exception e) {
                 log.warn("getConsumerIdListByGroup exception, " + brokerAddr + " " + group, e);
@@ -1045,6 +1050,7 @@ public class MQClientInstance {
         return null;
     }
 
+    //根据topic随机选择一个Broker的地址
     public String findBrokerAddrByTopic(final String topic) {
         TopicRouteData topicRouteData = this.topicRouteTable.get(topic);
         if (topicRouteData != null) {

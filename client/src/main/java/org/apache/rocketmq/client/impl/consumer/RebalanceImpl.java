@@ -243,11 +243,19 @@ public abstract class RebalanceImpl {
 
     private void rebalanceByTopic(final String topic, final boolean isOrder) {
         switch (messageModel) {
+            /*
+             * 广播模式的处理
+             * 广播模式下并没有负载均衡可言，每个consumer都会消费所有队列中的全部消息。
+             * 仅仅是更新当前consumer的处理队列processQueueTable的信息
+             */
             case BROADCASTING: {
+                //获取topic下的所有MessageQueue
                 Set<MessageQueue> mqSet = this.topicSubscribeInfoTable.get(topic);
                 if (mqSet != null) {
+                    //直接更新全部消息队列的处理队列processQueueTable的信息，创建最初的pullRequest并分发给PullMessageService
                     boolean changed = this.updateProcessQueueTableInRebalance(topic, mqSet, isOrder);
                     if (changed) {
+                        //设置新的本地订阅关系版本，重设流控参数，立即给所有broker发送心跳，让Broker更新当前订阅关系
                         this.messageQueueChanged(topic, mqSet, mqSet);
                         log.info("messageQueueChanged {} {} {} {}",
                             consumerGroup,
@@ -260,8 +268,15 @@ public abstract class RebalanceImpl {
                 }
                 break;
             }
+            /*
+             * 集群模式的处理
+             * 基于负载均衡策略确定跟配给当前消费者的MessageQueue，然后更新当前consumer的处理队列processQueueTable的信息
+             */
             case CLUSTERING: {
+                //获取topic下的所有MessageQueue
                 Set<MessageQueue> mqSet = this.topicSubscribeInfoTable.get(topic);
+                //获取topic + consumerGroup下所有的clientId集合，即消费者客户端id集合
+                //一个 clientId = 一个消费者
                 List<String> cidAll = this.mQClientFactory.findConsumerIdList(topic, consumerGroup);
                 if (null == mqSet) {
                     if (!topic.startsWith(MixAll.RETRY_GROUP_TOPIC_PREFIX)) {
@@ -274,16 +289,27 @@ public abstract class RebalanceImpl {
                 }
 
                 if (mqSet != null && cidAll != null) {
+                    //将topic的消息队列存入list集合中
                     List<MessageQueue> mqAll = new ArrayList<MessageQueue>();
                     mqAll.addAll(mqSet);
 
+                    /*
+                     * 对topic的消息队列和clientId集合分别进行排序
+                     * 排序能够保证，不同的客户端消费者在进行负载均衡时，其mqAll和cidAll中的元素顺序是一致的
+                     */
                     Collections.sort(mqAll);
                     Collections.sort(cidAll);
 
+                    //获取分配消息队列的策略实现，即负载均衡的策略类
                     AllocateMessageQueueStrategy strategy = this.allocateMessageQueueStrategy;
 
+                    //执行负载均衡后的当前消费者->将要消费的MessageQueue队列
                     List<MessageQueue> allocateResult = null;
                     try {
+                        /*
+                         * 为当前clientId也就是当前消费者，分配消息队列
+                         * 即执行负载均衡或者说重平衡的算法
+                         */
                         allocateResult = strategy.allocate(
                             this.consumerGroup,
                             this.mQClientFactory.getClientId(),
@@ -295,17 +321,23 @@ public abstract class RebalanceImpl {
                         return;
                     }
 
+                    //去重
                     Set<MessageQueue> allocateResultSet = new HashSet<MessageQueue>();
                     if (allocateResult != null) {
                         allocateResultSet.addAll(allocateResult);
                     }
 
+                    /*
+                     * 更新新分配的消息队列的处理队列processQueueTable的信息
+                     * 创建最初的pullRequest并分发给PullMessageService
+                     */
                     boolean changed = this.updateProcessQueueTableInRebalance(topic, allocateResultSet, isOrder);
                     if (changed) {
                         log.info(
                             "rebalanced result changed. allocateMessageQueueStrategyName={}, group={}, topic={}, clientId={}, mqAllSize={}, cidAllSize={}, rebalanceResultSize={}, rebalanceResultSet={}",
                             strategy.getName(), consumerGroup, topic, this.mQClientFactory.getClientId(), mqSet.size(), cidAll.size(),
                             allocateResultSet.size(), allocateResultSet);
+                        //设置新的本地订阅关系版本，重设流控参数，立即给所有broker发送心跳，让Broker更新当前订阅关系
                         this.messageQueueChanged(topic, mqSet, allocateResultSet);
                     }
                 }

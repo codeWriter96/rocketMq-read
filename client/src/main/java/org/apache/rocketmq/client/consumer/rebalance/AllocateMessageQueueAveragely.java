@@ -51,11 +51,20 @@ public class AllocateMessageQueueAveragely implements AllocateMessageQueueStrate
             return result;
         }
 
+        //当前消费者id在总消费者中索引
         int index = cidAll.indexOf(currentCID);
+        //队列 / 消费者数量 的余数。余数为0则能平均分配
         int mod = mqAll.size() % cidAll.size();
+        //计算当前消费者分配的队列数量
+        //1、如果队列数量小于等于消费者数量，那么每个消费者最多只能分到一个队列，则算作1（后续还会计算），否则，表示每个消费者至少分配一个队列，需要继续计算
+        //2、如果mod大于0并且当前消费者索引小于mod，那么当前消费者分到的队列数为平均分配的队列数+1，
+        // 否则，分到的队列数为平均分配的队列数，即索引在余数范围内的，多分配一个队列
         int averageSize =
             mqAll.size() <= cidAll.size() ? 1 : (mod > 0 && index < mod ? mqAll.size() / cidAll.size()
                 + 1 : mqAll.size() / cidAll.size());
+
+        //如果mod大于0并且当前消费者索引小于mod，那么起始索引为index * averageSize，否则起始索引为index * averageSize + mod
+        //也就是mod只会分配给：索引小于mod的那几个消费者
         int startIndex = (mod > 0 && index < mod) ? index * averageSize : index * averageSize + mod;
         int range = Math.min(averageSize, mqAll.size() - startIndex);
         for (int i = 0; i < range; i++) {
