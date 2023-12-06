@@ -27,6 +27,8 @@ import org.apache.rocketmq.common.message.MessageQueue;
 /**
  * Computer room Hashing queue algorithm, such as Alipay logic room
  */
+//消费者只消费绑定的机房中的broker，并对绑定机房中的MessageQueue进行负载均衡。
+// 这种策略要求brokerName的命名必须要按: 机房名 + @ + brokerName 的格式来设置
 public class AllocateMessageQueueByMachineRoom implements AllocateMessageQueueStrategy {
     private Set<String> consumeridcs;
 
@@ -50,13 +52,17 @@ public class AllocateMessageQueueByMachineRoom implements AllocateMessageQueueSt
         List<MessageQueue> premqAll = new ArrayList<MessageQueue>();
         for (MessageQueue mq : mqAll) {
             String[] temp = mq.getBrokerName().split("@");
+            ////如果brokerName符合“机房名@brokerName”的格式要求，并且当前消费者的consumeridcs包含该机房，则加入集合
             if (temp.length == 2 && consumeridcs.contains(temp[0])) {
                 premqAll.add(mq);
             }
         }
 
+        //平均分配的队列
         int mod = premqAll.size() / cidAll.size();
+        //取模剩余的队列
         int rem = premqAll.size() % cidAll.size();
+        //分配队列
         int startIndex = mod * currentIndex;
         int endIndex = startIndex + mod;
         for (int i = startIndex; i < endIndex; i++) {

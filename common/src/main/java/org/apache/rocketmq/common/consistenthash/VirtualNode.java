@@ -17,7 +17,9 @@
 package org.apache.rocketmq.common.consistenthash;
 
 public class VirtualNode<T extends Node> implements Node {
+    //节点
     final T physicalNode;
+    //当前节点的索引位置 = 哈希槽索引 + 当前节点的重复数量
     final int replicaIndex;
 
     public VirtualNode(T physicalNode, int replicaIndex) {
@@ -27,6 +29,7 @@ public class VirtualNode<T extends Node> implements Node {
 
     @Override
     public String getKey() {
+        //key + replicaIndex
         return physicalNode.getKey() + "-" + replicaIndex;
     }
 

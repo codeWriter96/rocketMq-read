@@ -29,6 +29,7 @@ import java.util.TreeMap;
  * algorithm
  */
 public class ConsistentHashRouter<T extends Node> {
+    //使用TreeMap实现
     private final SortedMap<Long, VirtualNode<T>> ring = new TreeMap<Long, VirtualNode<T>>();
     private final HashFunction hashFunction;
 
@@ -38,7 +39,7 @@ public class ConsistentHashRouter<T extends Node> {
 
     /**
      * @param pNodes collections of physical nodes
-     * @param vNodeCount amounts of virtual nodes
+     * @param vNodeCount amounts of virtual nodes 哈希环中哈希槽的数量
      * @param hashFunction hash Function to hash Node instances
      */
     public ConsistentHashRouter(Collection<T> pNodes, int vNodeCount, HashFunction hashFunction) {
@@ -63,6 +64,7 @@ public class ConsistentHashRouter<T extends Node> {
         if (vNodeCount < 0)
             throw new IllegalArgumentException("illegal virtual node counts :" + vNodeCount);
         int existingReplicas = getExistingReplicas(pNode);
+        //遍历哈希槽
         for (int i = 0; i < vNodeCount; i++) {
             VirtualNode<T> vNode = new VirtualNode<T>(pNode, i + existingReplicas);
             ring.put(hashFunction.hash(vNode.getKey()), vNode);
@@ -98,6 +100,7 @@ public class ConsistentHashRouter<T extends Node> {
         return ring.get(nodeHashVal).getPhysicalNode();
     }
 
+    //获取哈希环中重复节点的数量
     public int getExistingReplicas(T pNode) {
         int replicas = 0;
         for (VirtualNode<T> vNode : ring.values()) {

@@ -29,6 +29,7 @@ import org.apache.rocketmq.common.message.MessageQueue;
 
 /**
  * Consistent Hashing queue algorithm
+ * 一致性哈希分配
  */
 public class AllocateMessageQueueConsistentHash implements AllocateMessageQueueStrategy {
     private final InternalLogger log = ClientLogger.getLog();
@@ -44,6 +45,11 @@ public class AllocateMessageQueueConsistentHash implements AllocateMessageQueueS
         this(virtualNodeCnt, null);
     }
 
+    /**
+     *
+     * @param virtualNodeCnt 物理节点的虚拟节点的数量，不可小于0，默认10。
+     * @param customHashFunction 自定义的哈希函数，默认为MD5Hash。
+     */
     public AllocateMessageQueueConsistentHash(int virtualNodeCnt, HashFunction customHashFunction) {
         if (virtualNodeCnt < 0) {
             throw new IllegalArgumentException("illegal virtualNodeCnt :" + virtualNodeCnt);
@@ -75,11 +81,14 @@ public class AllocateMessageQueueConsistentHash implements AllocateMessageQueueS
             return result;
         }
 
+        //包装为ClientNode对象
         Collection<ClientNode> cidNodes = new ArrayList<ClientNode>();
         for (String cid : cidAll) {
             cidNodes.add(new ClientNode(cid));
         }
 
+        // 实例化ConsistentHashRouter对象，用于产生虚拟节点以及构建哈希环
+        // 如果没有指定哈希函数，则采用MD5Hash作为哈希函数
         final ConsistentHashRouter<ClientNode> router; //for building hash ring
         if (customHashFunction != null) {
             router = new ConsistentHashRouter<ClientNode>(cidNodes, virtualNodeCnt, customHashFunction);
@@ -89,8 +98,10 @@ public class AllocateMessageQueueConsistentHash implements AllocateMessageQueueS
 
         List<MessageQueue> results = new ArrayList<MessageQueue>();
         for (MessageQueue mq : mqAll) {
+            //对messageQueue进行hash计算，按顺时针找到最近的consumer节点
             ClientNode clientNode = router.routeNode(mq.toString());
             if (clientNode != null && currentCID.equals(clientNode.getKey())) {
+                //如果是当前consumer，则加入结果集
                 results.add(mq);
             }
         }
@@ -113,6 +124,7 @@ public class AllocateMessageQueueConsistentHash implements AllocateMessageQueueS
 
         @Override
         public String getKey() {
+            //key为 clientID
             return clientID;
         }
     }
