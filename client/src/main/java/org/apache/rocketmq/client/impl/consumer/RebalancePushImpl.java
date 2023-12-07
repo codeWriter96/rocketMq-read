@@ -53,23 +53,30 @@ public class RebalancePushImpl extends RebalanceImpl {
          * When rebalance result changed, should update subscription's version to notify broker.
          * Fix: inconsistency subscription may lead to consumer miss messages.
          */
+        //获取本地订阅信息
         SubscriptionData subscriptionData = this.subscriptionInner.get(topic);
         long newVersion = System.currentTimeMillis();
         log.info("{} Rebalance changed, also update version: {}, {}", topic, subscriptionData.getSubVersion(), newVersion);
         subscriptionData.setSubVersion(newVersion);
 
+        //获取处理队列数量
         int currentQueueCount = this.processQueueTable.size();
         if (currentQueueCount != 0) {
+            //topic级别的流量控制阈值，即当前consumer对于Topic在本地最大能缓存的消息数，默认-1，无限制。如果不等于-1，则该值将会被重新计算
+            //例如，如果pullThresholdForTopic的值是1000，并且为该消费者分配了10个消息队列，那么pullThresholdForQueue将被设置为100
             int pullThresholdForTopic = this.defaultMQPushConsumerImpl.getDefaultMQPushConsumer().getPullThresholdForTopic();
             if (pullThresholdForTopic != -1) {
+                //取值为 pullThresholdForTopic / currentQueueCount
                 int newVal = Math.max(1, pullThresholdForTopic / currentQueueCount);
                 log.info("The pullThresholdForQueue is changed from {} to {}",
                     this.defaultMQPushConsumerImpl.getDefaultMQPushConsumer().getPullThresholdForQueue(), newVal);
                 this.defaultMQPushConsumerImpl.getDefaultMQPushConsumer().setPullThresholdForQueue(newVal);
             }
 
+            //topic级别的消息缓存大小阈值，即当前consumer对于Topic在本地最大能缓存的消息大小，默认-1，无限制
             int pullThresholdSizeForTopic = this.defaultMQPushConsumerImpl.getDefaultMQPushConsumer().getPullThresholdSizeForTopic();
             if (pullThresholdSizeForTopic != -1) {
+                //取值为 pullThresholdSizeForTopic / currentQueueCount
                 int newVal = Math.max(1, pullThresholdSizeForTopic / currentQueueCount);
                 log.info("The pullThresholdSizeForQueue is changed from {} to {}",
                     this.defaultMQPushConsumerImpl.getDefaultMQPushConsumer().getPullThresholdSizeForQueue(), newVal);
@@ -78,6 +85,7 @@ public class RebalancePushImpl extends RebalanceImpl {
         }
 
         // notify broker
+        //主动发送心跳信息给所有broker。
         this.getmQClientFactory().sendHeartbeatToAllBrokerWithLock();
     }
 
