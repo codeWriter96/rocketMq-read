@@ -37,6 +37,8 @@ public class ConsumerOffsetManager extends ConfigManager {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
     protected static final String TOPIC_GROUP_SEPARATOR = "@";
 
+    //存放消费者topic@group的消费偏移量。存放在{user.home}/store/config/consumerOffset.json
+    //也就是Broker中存放的消费者的偏移量，每次都由 <消费者> 主动调用来进行修改。commitOffset
     protected ConcurrentMap<String/* topic@group */, ConcurrentMap<Integer, Long>> offsetTable =
         new ConcurrentHashMap<String, ConcurrentMap<Integer, Long>>(512);
 
@@ -118,6 +120,7 @@ public class ConsumerOffsetManager extends ConfigManager {
         return groups;
     }
 
+    //更新偏移量
     public void commitOffset(final String clientHost, final String group, final String topic, final int queueId,
         final long offset) {
         // topic@group

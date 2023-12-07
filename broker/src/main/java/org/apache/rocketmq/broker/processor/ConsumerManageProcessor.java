@@ -53,6 +53,7 @@ public class ConsumerManageProcessor extends AsyncNettyRequestProcessor implemen
         switch (request.getCode()) {
             case RequestCode.GET_CONSUMER_LIST_BY_GROUP:
                 return this.getConsumerListByGroup(ctx, request);
+            //消费者主动调用，更新Broker中消费者的偏移量
             case RequestCode.UPDATE_CONSUMER_OFFSET:
                 return this.updateConsumerOffset(ctx, request);
             //查询消费者的偏移量
@@ -117,6 +118,9 @@ public class ConsumerManageProcessor extends AsyncNettyRequestProcessor implemen
         return response;
     }
 
+    //从该处看出，哪怕采用的是CONSUME_FROM_LAST_OFFSET，也不能保证Broker中查出来的的ConsumerOffset与消费者实际的偏移量相等。
+    //只要网络波动，消费者第一次的UPDATE_CONSUMER_OFFSET请求没有成功，则queryConsumerOffset查出来的偏移量就会 = 0。
+    //即：偏移量以Broker的为准。因此，消费者需要在消费消息时保证幂等
     private RemotingCommand queryConsumerOffset(ChannelHandlerContext ctx, RemotingCommand request)
         throws RemotingCommandException {
         //构建请求
@@ -135,17 +139,24 @@ public class ConsumerManageProcessor extends AsyncNettyRequestProcessor implemen
                 requestHeader.getConsumerGroup(), requestHeader.getTopic(), requestHeader.getQueueId());
 
         if (offset >= 0) {
-            //偏移量 >= 0 则存入响应结果返回
+            //偏移量 >= 0,表示订阅该topic的消费者组主动更新过Broker中的偏移量，即发送过UPDATE_CONSUMER_OFFSET请求
+            //则存入响应结果返回
             responseHeader.setOffset(offset);
             response.setCode(ResponseCode.SUCCESS);
             response.setRemark(null);
-        } else {
+        } else
+            //缓存中没有找到的情况。表示订阅该topic的消费者组没有更新过Broker中的偏移量。
+            // 直接当成新启用的消费者组，即该消费者组第一次订阅该topic
+            {
+            //从消息偏移量索引文件ConsumeQueue中，找到最小偏移量
             long minOffset =
                 this.brokerController.getMessageStore().getMinOffsetInQueue(requestHeader.getTopic(),
                     requestHeader.getQueueId());
+            //如果消费队列最小偏移量小于等于0 + 该消费队列的0偏移量数据还在内存中
             if (minOffset <= 0
                 && !this.brokerController.getMessageStore().checkInDiskByConsumeOffset(
                 requestHeader.getTopic(), requestHeader.getQueueId(), 0)) {
+                //从 0 开始读取
                 responseHeader.setOffset(0L);
                 response.setCode(ResponseCode.SUCCESS);
                 response.setRemark(null);
