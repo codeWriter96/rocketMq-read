@@ -18,6 +18,8 @@ package org.apache.rocketmq.client.impl.consumer;
 
 import org.apache.rocketmq.common.message.MessageQueue;
 
+// 最初始的PullRequest，就是在负载均衡之时(RebalanceImpl.doRebalance)对于新分配到的消费队列创建的。
+// 然后通过dispatchPullRequest方法对这些PullRequest进行分发，Push模式下这些请求会被PullMessageService依次处理，后续实现自动拉取消息，以及消费。
 public class PullRequest {
     private String consumerGroup;
     private MessageQueue messageQueue;
