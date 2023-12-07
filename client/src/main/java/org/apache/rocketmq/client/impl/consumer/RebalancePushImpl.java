@@ -82,23 +82,34 @@ public class RebalancePushImpl extends RebalanceImpl {
     }
 
     @Override
+    //移除非必要的消息队列
     public boolean removeUnnecessaryMessageQueue(MessageQueue mq, ProcessQueue pq) {
+        //保存当前MessageQueue的偏移量。有可能存在本地，集群模式下可能存在Broker中
         this.defaultMQPushConsumerImpl.getOffsetStore().persist(mq);
+        //移除OffsetStore内部的offsetTable中的对应消息队列的k-v数据
         this.defaultMQPushConsumerImpl.getOffsetStore().removeOffset(mq);
+
+        //有序消费 + 集群模式
         if (this.defaultMQPushConsumerImpl.isConsumeOrderly()
             && MessageModel.CLUSTERING.equals(this.defaultMQPushConsumerImpl.messageModel())) {
             try {
+                //尝试获取处理队列的消费锁，最多等待1s。
+                //这是一个本地互斥锁，保证在获取到锁以及发起解锁的过程中，没有线程能消费该队列的消息，因为MessageListenerOrderly在消费消息时也需要获取该锁
                 if (pq.getConsumeLock().tryLock(1000, TimeUnit.MILLISECONDS)) {
                     try {
+                        //请求Broker释放当前消息队列的分布式锁，最多延迟20s
                         return this.unlockDelay(mq, pq);
                     } finally {
                         pq.getConsumeLock().unlock();
                     }
                 } else {
+                    //如果没有获得本地锁，那么表示当前消息队列正在消息，不能解锁，那么本次就放弃解锁了，移除消息队列失败。
+                    //等待下次重新分配消费队列时，再进行移除。返回false
                     log.warn("[WRONG]mq is consuming, so can not unlock it, {}. maybe hanged for a while, {}",
                         mq,
                         pq.getTryUnlockTimes());
 
+                    //增加未获取锁次数
                     pq.incTryUnlockTimes();
                 }
             } catch (Exception e) {
@@ -110,8 +121,10 @@ public class RebalancePushImpl extends RebalanceImpl {
         return true;
     }
 
+    //向Broker发送单向请求，Code为UNLOCK_BATCH_MQ，表示请求Broker释放当前消息队列的分布式锁。
+    // 如果消费队列中还有剩余消息，则延迟20s发送解锁请求
     private boolean unlockDelay(final MessageQueue mq, final ProcessQueue pq) {
-
+        //如果消费队列中还有剩余消息，则延迟20s解锁
         if (pq.hasTempMessage()) {
             log.info("[{}]unlockDelay, begin {} ", mq.hashCode(), mq);
             this.defaultMQPushConsumerImpl.getmQClientFactory().getScheduledExecutorService().schedule(new Runnable() {
@@ -122,6 +135,7 @@ public class RebalancePushImpl extends RebalanceImpl {
                 }
             }, UNLOCK_DELAY_TIME_MILLS, TimeUnit.MILLISECONDS);
         } else {
+            //立即发送单向解锁请求
             this.unlock(mq, true);
         }
         return true;
@@ -149,6 +163,7 @@ public class RebalancePushImpl extends RebalanceImpl {
         return result;
     }
 
+    // 计算该MessageQueue的下一个消息的消费偏移量offset
     @Override
     public long computePullFromWhereWithException(MessageQueue mq) throws MQClientException {
         long result = -1;
@@ -158,17 +173,22 @@ public class RebalancePushImpl extends RebalanceImpl {
             case CONSUME_FROM_LAST_OFFSET_AND_FROM_MIN_WHEN_BOOT_FIRST:
             case CONSUME_FROM_MIN_OFFSET:
             case CONSUME_FROM_MAX_OFFSET:
+            //消费者组第一次启动时从最后的位置消费，后续再启动接着上次消费的进度开始消费(默认选项)
             case CONSUME_FROM_LAST_OFFSET: {
+                //从本地文件 或者 Broker中读取上一次的偏移量
                 long lastOffset = offsetStore.readOffset(mq, ReadOffsetType.READ_FROM_STORE);
                 if (lastOffset >= 0) {
                     result = lastOffset;
                 }
                 // First start,no offset
+                //看作是第一次启动，从最后的位置开始消费
                 else if (-1 == lastOffset) {
                     if (mq.getTopic().startsWith(MixAll.RETRY_GROUP_TOPIC_PREFIX)) {
+                        //重试队列给0
                         result = 0L;
                     } else {
                         try {
+                            //请求broker，获取mq对应ConsumeQueue的最大偏移量，即最新消息索引点位
                             result = this.mQClientFactory.getMQAdminImpl().maxOffset(mq);
                         } catch (MQClientException e) {
                             log.warn("Compute consume offset from last offset exception, mq={}, exception={}", mq, e);
@@ -180,22 +200,30 @@ public class RebalancePushImpl extends RebalanceImpl {
                 }
                 break;
             }
+            //消费者组第一次启动时从最开始的位置消费，后续再启动接着上次消费的进度开始消费
             case CONSUME_FROM_FIRST_OFFSET: {
+                //从本地文件 或者 Broker中读取上一次的偏移量
                 long lastOffset = offsetStore.readOffset(mq, ReadOffsetType.READ_FROM_STORE);
                 if (lastOffset >= 0) {
                     result = lastOffset;
-                } else if (-1 == lastOffset) {
+                }
+                //看作是第一次启动，从最开始的位置开始消费
+                else if (-1 == lastOffset) {
                     result = 0L;
                 } else {
                     result = -1;
                 }
                 break;
             }
+            //消费者组第一次启动时消费在指定时间戳后产生的消息，后续再启动接着上次消费的进度开始消费
             case CONSUME_FROM_TIMESTAMP: {
                 long lastOffset = offsetStore.readOffset(mq, ReadOffsetType.READ_FROM_STORE);
                 if (lastOffset >= 0) {
                     result = lastOffset;
-                } else if (-1 == lastOffset) {
+                }
+                //看作是第一次启动，从指定时间戳后开始消费
+                else if (-1 == lastOffset) {
+                    //对于重试消息，那么获取mq对应ConsumeQueue的最大偏移量，即最新消息索引点位
                     if (mq.getTopic().startsWith(MixAll.RETRY_GROUP_TOPIC_PREFIX)) {
                         try {
                             result = this.mQClientFactory.getMQAdminImpl().maxOffset(mq);
@@ -205,8 +233,10 @@ public class RebalancePushImpl extends RebalanceImpl {
                         }
                     } else {
                         try {
+                            //解析时间戳
                             long timestamp = UtilAll.parseDate(this.defaultMQPushConsumerImpl.getDefaultMQPushConsumer().getConsumeTimestamp(),
                                 UtilAll.YYYYMMDDHHMMSS).getTime();
+                            //查询指定时间戳之后的消息偏移量
                             result = this.mQClientFactory.getMQAdminImpl().searchOffset(mq, timestamp);
                         } catch (MQClientException e) {
                             log.warn("Compute consume offset from last offset exception, mq={}, exception={}", mq, e);

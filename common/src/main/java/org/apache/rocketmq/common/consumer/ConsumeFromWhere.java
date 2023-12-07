@@ -17,6 +17,8 @@
 package org.apache.rocketmq.common.consumer;
 
 public enum ConsumeFromWhere {
+    //默认选项。消费者组第一次启动时从最后的位置消费，后续再启动接着上次消费的进度开始消费
+    //即第一次启动时从该队列最尾开始消费，即跳过历史消息，后续再启动接着上次消费的进度开始消费。
     CONSUME_FROM_LAST_OFFSET,
 
     @Deprecated
@@ -25,6 +27,9 @@ public enum ConsumeFromWhere {
     CONSUME_FROM_MIN_OFFSET,
     @Deprecated
     CONSUME_FROM_MAX_OFFSET,
+    //消费者组第一次启动时从最开始的位置消费，后续再启动接着上次消费的进度开始消费。
+    //即第一次启动时历史消息（还储存在 broker 的）全部消费一遍，后续再启动接着上次消费的进度开始消费。
     CONSUME_FROM_FIRST_OFFSET,
+    //消费者组第一次启动时消费在指定时间戳后产生的消息，后续再启动接着上次消费的进度开始消费。
     CONSUME_FROM_TIMESTAMP,
 }

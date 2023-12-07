@@ -55,6 +55,7 @@ public class ConsumerManageProcessor extends AsyncNettyRequestProcessor implemen
                 return this.getConsumerListByGroup(ctx, request);
             case RequestCode.UPDATE_CONSUMER_OFFSET:
                 return this.updateConsumerOffset(ctx, request);
+            //查询消费者的偏移量
             case RequestCode.QUERY_CONSUMER_OFFSET:
                 return this.queryConsumerOffset(ctx, request);
             default:
@@ -118,6 +119,7 @@ public class ConsumerManageProcessor extends AsyncNettyRequestProcessor implemen
 
     private RemotingCommand queryConsumerOffset(ChannelHandlerContext ctx, RemotingCommand request)
         throws RemotingCommandException {
+        //构建请求
         final RemotingCommand response =
             RemotingCommand.createResponseCommand(QueryConsumerOffsetResponseHeader.class);
         final QueryConsumerOffsetResponseHeader responseHeader =
@@ -126,11 +128,14 @@ public class ConsumerManageProcessor extends AsyncNettyRequestProcessor implemen
             (QueryConsumerOffsetRequestHeader) request
                 .decodeCommandCustomHeader(QueryConsumerOffsetRequestHeader.class);
 
+        //根据 ConsumerGroup、Topic、QueueId 查询offset，实际上是从broker端的offsetTable这个map集合缓存属性中获取
+        //在broker启动时就从broker的{user.home}/store/config/consumerOffset.json中加载
         long offset =
             this.brokerController.getConsumerOffsetManager().queryOffset(
                 requestHeader.getConsumerGroup(), requestHeader.getTopic(), requestHeader.getQueueId());
 
         if (offset >= 0) {
+            //偏移量 >= 0 则存入响应结果返回
             responseHeader.setOffset(offset);
             response.setCode(ResponseCode.SUCCESS);
             response.setRemark(null);

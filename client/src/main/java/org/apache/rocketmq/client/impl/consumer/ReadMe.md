@@ -19,3 +19,11 @@
 5、AllocateMachineRoomNearby：机房就近分配策略。消费者对绑定机房中的MessageQueue进行负载均衡。
     除此之外，对于某些拥有消息队列但却没有消费者的机房，其消息队列会被所有消费者分配，具体的分配策略是，另外传入的一个AllocateMessageQueueStrategy的实现。
 6、AllocateMessageQueueConsistentHash：一致性哈希分配策略。基于一致性哈希算法分配。
+
+
+**MQ中consumeMessageService的并发消费和顺序消费**
+1、并发消费
+并发消费是指多个消费者将并发消费消息，消费的时候可能是无序的
+
+2、顺序消费
+顺序消息是指对于一个指定的 Topic ，消息严格按照先进先出（FIFO）的原则进行消息发布和消费，即先发布的消息先消费，后发布的消息后消费
