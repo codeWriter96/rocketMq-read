@@ -200,15 +200,19 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
     }
 
     public void pullMessage(final PullRequest pullRequest) {
+        //获取对应的处理队列
         final ProcessQueue processQueue = pullRequest.getProcessQueue();
+        //如果该处理队列已被丢去，那么直接返回
         if (processQueue.isDropped()) {
             log.info("the pull request[{}] is dropped.", pullRequest.toString());
             return;
         }
 
+        //设置最后的拉取时间戳
         pullRequest.getProcessQueue().setLastPullTimestamp(System.currentTimeMillis());
 
         try {
+            //确定此consumer的服务状态正常，如果服务状态不是RUNNING，那么抛出异常
             this.makeSureStateOK();
         } catch (MQClientException e) {
             log.warn("pullMessage exception, consumer state not ok", e);
@@ -216,16 +220,23 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
             return;
         }
 
+        //如果消费者暂停了
         if (this.isPause()) {
             log.warn("consumer was paused, execute pull request later. instanceName={}, group={}", this.defaultMQPushConsumer.getInstanceName(), this.defaultMQPushConsumer.getConsumerGroup());
+            //那么延迟1s发送拉取消息请求
             this.executePullRequestLater(pullRequest, PULL_TIME_DELAY_MILLS_WHEN_SUSPEND);
             return;
         }
+        //流控处理
 
+        //获取processQueue中已缓存的消息总数量
         long cachedMessageCount = processQueue.getMsgCount().get();
+        //获取processQueue中已缓存的消息总大小MB
         long cachedMessageSizeInMiB = processQueue.getMsgSize().get() / (1024 * 1024);
 
+        //如果processQueue中已缓存的消息总数量大于设定的阈值
         if (cachedMessageCount > this.defaultMQPushConsumer.getPullThresholdForQueue()) {
+            //延迟50ms发送拉取消息请求
             this.executePullRequestLater(pullRequest, PULL_TIME_DELAY_MILLS_WHEN_FLOW_CONTROL);
             if ((queueFlowControlTimes++ % 1000) == 0) {
                 log.warn(
@@ -235,7 +246,9 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
             return;
         }
 
+        //如果processQueue中已缓存的消息总大小大于设定的阈值
         if (cachedMessageSizeInMiB > this.defaultMQPushConsumer.getPullThresholdSizeForQueue()) {
+            //延迟50ms发送拉取消息请求
             this.executePullRequestLater(pullRequest, PULL_TIME_DELAY_MILLS_WHEN_FLOW_CONTROL);
             if ((queueFlowControlTimes++ % 1000) == 0) {
                 log.warn(
@@ -245,8 +258,11 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
             return;
         }
 
+        //不是有序消费。即：并发消费
         if (!this.consumeOrderly) {
+            //如果内存中消息的offset的最大跨度大于设定的阈值，默认2000
             if (processQueue.getMaxSpan() > this.defaultMQPushConsumer.getConsumeConcurrentlyMaxSpan()) {
+                //延迟50ms发送拉取消息请求
                 this.executePullRequestLater(pullRequest, PULL_TIME_DELAY_MILLS_WHEN_FLOW_CONTROL);
                 if ((queueMaxSpanFlowControlTimes++ % 1000) == 0) {
                     log.warn(
@@ -257,16 +273,23 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                 return;
             }
         } else {
+            //顺序消费
+            //如果processQueue已经锁定
             if (processQueue.isLocked()) {
+                //如果此前没有锁定过，表示之前的pullRequest请求不是顺序消费请求，或者请求无效。
+                //则需要设置消费offset偏移量
                 if (!pullRequest.isPreviouslyLocked()) {
                     long offset = -1L;
                     try {
+                        //获取该MessageQueue的下一个消息的消费偏移量offset
+                        //pull模式返回0，push模式则根据ConsumeFromWhere枚举计算得到
                         offset = this.rebalanceImpl.computePullFromWhereWithException(pullRequest.getMessageQueue());
                     } catch (Exception e) {
                         this.executePullRequestLater(pullRequest, pullTimeDelayMillsWhenException);
                         log.error("Failed to compute pull offset, pullResult: {}", pullRequest, e);
                         return;
                     }
+                    //消费点位超前，那么重设消费点位
                     boolean brokerBusy = offset < pullRequest.getNextOffset();
                     log.info("the first time to pull message, so fix offset from broker. pullRequest: {} NewOffset: {} brokerBusy: {}",
                             pullRequest, offset, brokerBusy);
@@ -275,18 +298,24 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                                 pullRequest, offset);
                     }
 
+                    //设置previouslyLocked为true
                     pullRequest.setPreviouslyLocked(true);
+                    //重新设置消费点位
                     pullRequest.setNextOffset(offset);
                 }
             } else {
+                //如果没有被锁住，那么延迟3s发送拉取消息请求
                 this.executePullRequestLater(pullRequest, pullTimeDelayMillsWhenException);
                 log.info("pull message later because not locked in broker, {}", pullRequest);
                 return;
             }
         }
 
+        //获取topic对应的SubscriptionData订阅关系
         final SubscriptionData subscriptionData = this.rebalanceImpl.getSubscriptionInner().get(pullRequest.getMessageQueue().getTopic());
+        //如果没有订阅信息
         if (null == subscriptionData) {
+            //延迟3s发送拉取消息请求
             this.executePullRequestLater(pullRequest, pullTimeDelayMillsWhenException);
             log.warn("find the consumer's subscription failed, {}", pullRequest);
             return;
@@ -294,6 +323,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
 
         final long beginTimestamp = System.currentTimeMillis();
 
+        // 创建拉取消息的回调函数对象，当拉取消息的请求返回之后，将会指定回调函数
         PullCallback pullCallback = new PullCallback() {
             @Override
             public void onSuccess(PullResult pullResult) {
@@ -392,11 +422,15 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
             }
         };
 
+        //是否允许提交偏移量到Broker
         boolean commitOffsetEnable = false;
         long commitOffsetValue = 0L;
+        //集群模式下
         if (MessageModel.CLUSTERING == this.defaultMQPushConsumer.getMessageModel()) {
+            //从本地内存offsetTable读取commitOffsetValue
             commitOffsetValue = this.offsetStore.readOffset(pullRequest.getMessageQueue(), ReadOffsetType.READ_FROM_MEMORY);
             if (commitOffsetValue > 0) {
+                //如果本地内存有关于此mq的offset，那么设置为true，表示可以上报消费位点给Broker
                 commitOffsetEnable = true;
             }
         }
@@ -412,6 +446,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
             classFilter = sd.isClassFilterMode();
         }
 
+        //二进制或操作
         int sysFlag = PullSysFlag.buildSysFlag(
                 commitOffsetEnable, // commitOffset
                 true, // suspend
@@ -419,6 +454,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                 classFilter // class filter
         );
         try {
+            //真正的开始拉取消息
             this.pullAPIWrapper.pullKernelImpl(
                     pullRequest.getMessageQueue(),
                     subExpression,
@@ -435,6 +471,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
             );
         } catch (Exception e) {
             log.error("pullKernelImpl exception", e);
+            //拉取异常，延迟3s发送拉取消息请求
             this.executePullRequestLater(pullRequest, pullTimeDelayMillsWhenException);
         }
     }

@@ -725,6 +725,7 @@ public class MQClientAPIImpl {
         final CommunicationMode communicationMode,
         final PullCallback pullCallback
     ) throws RemotingException, MQBrokerException, InterruptedException {
+        //构建请求命令对象，请求Code为PULL_MESSAGE
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.PULL_MESSAGE, requestHeader);
 
         switch (communicationMode) {
@@ -732,6 +733,7 @@ public class MQClientAPIImpl {
                 assert false;
                 return null;
             case ASYNC:
+                //push模式默认异步拉取消息
                 this.pullMessageAsync(addr, request, timeoutMillis, pullCallback);
                 return null;
             case SYNC:
@@ -744,7 +746,7 @@ public class MQClientAPIImpl {
         return null;
     }
 
-    private void pullMessageAsync(
+    private void     pullMessageAsync(
         final String addr,
         final RemotingCommand request,
         final long timeoutMillis,
