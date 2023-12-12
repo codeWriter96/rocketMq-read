@@ -148,6 +148,8 @@ public class BrokerConfig {
 
     // whether do filter when retry.
     private boolean filterSupportRetry = false;
+
+    //SQL92过滤模式需要开启
     private boolean enablePropertyFilter = false;
 
     private boolean compressedRegister = false;

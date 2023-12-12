@@ -232,6 +232,7 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
 
     /**
      * Whether update subscription relationship when every pull
+     * 每次拉取消息时是否更新订阅关系,该方法的返回值默认为False
      */
     private boolean postSubscriptionWhenPull = false;
 
