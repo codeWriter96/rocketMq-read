@@ -96,8 +96,10 @@ public class BrokerConfig {
 
     private int filterServerNums = 0;
 
+    //是否允许长时间挂起。默认为true。则挂起时间为shortPollingTimeMills
     private boolean longPollingEnable = true;
 
+    //短时间挂起1s
     private long shortPollingTimeMills = 1000;
 
     private boolean notifyConsumerIdsChangedEnable = true;
@@ -110,6 +112,9 @@ public class BrokerConfig {
     private int commercialBigCount = 1;
     private int commercialBaseCount = 1;
 
+    //true表示采用java堆内内存处理消费数据。默认选项
+    //false表示采用堆外DirectByteBuffer处理消费数据，mmp技术0拷贝到socket。看起来更快，但是可能造成堆外内存分配不够，触发系统内存回收和落盘操作
+    //地址：https://www.jianshu.com/p/f8efea4b4735
     private boolean transferMsgByHeap = true;
     private int maxDelayTime = 40;
 
@@ -147,6 +152,7 @@ public class BrokerConfig {
     private long filterDataCleanTimeSpan = 24 * 3600 * 1000;
 
     // whether do filter when retry.
+    //重试队列是否支持过滤
     private boolean filterSupportRetry = false;
 
     //SQL92过滤模式需要开启

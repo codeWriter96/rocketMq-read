@@ -41,6 +41,7 @@ public class PullMessageRequestHeader implements CommandCustomHeader {
     @CFNotNull
     private Long commitOffset;
     @CFNotNull
+    //Broker最长挂起时间，默认15s
     private Long suspendTimeoutMillis;
     @CFNullable
     private String subscription;

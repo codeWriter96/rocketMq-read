@@ -258,59 +258,81 @@ public class PullMessageProcessor extends AsyncNettyRequestProcessor implements 
         }
 
         MessageFilter messageFilter;
+        //重试队列是否支持过滤,默认false
         if (this.brokerController.getBrokerConfig().isFilterSupportRetry()) {
             messageFilter = new ExpressionForRetryMessageFilter(subscriptionData, consumerFilterData,
                 this.brokerController.getConsumerFilterManager());
         } else {
+            //创建普通的ExpressionMessageFilter，内部保存了消费者启动时通过心跳上报的订阅关系
             messageFilter = new ExpressionMessageFilter(subscriptionData, consumerFilterData,
                 this.brokerController.getConsumerFilterManager());
         }
 
+        //通过DefaultMessageStore#getMessage方法批量拉取消息，并且进行过滤操作
         final GetMessageResult getMessageResult =
             this.brokerController.getMessageStore().getMessage(requestHeader.getConsumerGroup(), requestHeader.getTopic(),
                 requestHeader.getQueueId(), requestHeader.getQueueOffset(), requestHeader.getMaxMsgNums(), messageFilter);
+        //获取的消息不为null
         if (getMessageResult != null) {
+            //设置响应结果的拉取状态
             response.setRemark(getMessageResult.getStatus().name());
+            //设置下一个消费起始偏移量
             responseHeader.setNextBeginOffset(getMessageResult.getNextBeginOffset());
+            //设置消费的最小偏移量 + 最大偏移量
             responseHeader.setMinOffset(getMessageResult.getMinOffset());
             responseHeader.setMaxOffset(getMessageResult.getMaxOffset());
 
+            //设置下次拉取消息的建议broker是MATER还是SLAVE
             if (getMessageResult.isSuggestPullingFromSlave()) {
+                //设置建议的brokerId为从服务器的id 1
                 responseHeader.setSuggestWhichBrokerId(subscriptionGroupConfig.getWhichBrokerWhenConsumeSlowly());
             } else {
+                //master设置BrokerId为0
                 responseHeader.setSuggestWhichBrokerId(MixAll.MASTER_ID);
             }
 
+            //判断当前Broker的角色
             switch (this.brokerController.getMessageStoreConfig().getBrokerRole()) {
                 case ASYNC_MASTER:
                 case SYNC_MASTER:
                     break;
                 case SLAVE:
+                    //从服务器
+                    //如果当前从服务器不可读
                     if (!this.brokerController.getBrokerConfig().isSlaveReadEnable()) {
+                        //设置响应码为PULL_RETRY_IMMEDIATELY，consumer收到响应后会立即从MASTER重试拉取
                         response.setCode(ResponseCode.PULL_RETRY_IMMEDIATELY);
+                        //设置建议的brokerId为主服务器的id 0
                         responseHeader.setSuggestWhichBrokerId(MixAll.MASTER_ID);
                     }
                     break;
             }
 
+            //如果从服务器可读
             if (this.brokerController.getBrokerConfig().isSlaveReadEnable()) {
                 // consume too slow ,redirect to another machine
+                // 如果消费太慢了，那么下次重定向到另一台broker，
+                // id通过subscriptionGroupConfig的whichBrokerWhenConsumeSlowly指定，默认1，即SLAVE
                 if (getMessageResult.isSuggestPullingFromSlave()) {
                     responseHeader.setSuggestWhichBrokerId(subscriptionGroupConfig.getWhichBrokerWhenConsumeSlowly());
                 }
                 // consume ok
                 else {
+                    //id通过subscriptionGroupConfig的brokerId指定，默认0，即MASTER
                     responseHeader.setSuggestWhichBrokerId(subscriptionGroupConfig.getBrokerId());
                 }
             } else {
+                //如果从服务器不可读，设置建议的brokerId为主服务器的id 0
                 responseHeader.setSuggestWhichBrokerId(MixAll.MASTER_ID);
             }
 
+            //判断拉取消息状态码，并设置对应的响应码
             switch (getMessageResult.getStatus()) {
                 case FOUND:
                     response.setCode(ResponseCode.SUCCESS);
                     break;
                 case MESSAGE_WAS_REMOVING:
+                    //消息被移除，要求消费者立即重试拉取消息
                     response.setCode(ResponseCode.PULL_RETRY_IMMEDIATELY);
                     break;
                 case NO_MATCHED_LOGIC_QUEUE:
@@ -356,7 +378,9 @@ public class PullMessageProcessor extends AsyncNettyRequestProcessor implements 
                     break;
             }
 
+            //判断如果有消费钩子，那么执行consumeMessageBefore方法
             if (this.hasConsumeMessageHook()) {
+                //构造钩子函数的context
                 ConsumeMessageContext context = new ConsumeMessageContext();
                 context.setConsumerGroup(requestHeader.getConsumerGroup());
                 context.setTopic(requestHeader.getTopic());
@@ -395,12 +419,15 @@ public class PullMessageProcessor extends AsyncNettyRequestProcessor implements 
                         break;
                 }
 
+                //执行钩子函数
                 this.executeConsumeMessageHookBefore(context);
             }
 
+            //判断响应码，然后直接返回数据或者进行短轮询或者长轮询
             switch (response.getCode()) {
                 case ResponseCode.SUCCESS:
 
+                    //成功。更新一些统计数据
                     this.brokerController.getBrokerStatsManager().incGroupGetNums(requestHeader.getConsumerGroup(), requestHeader.getTopic(),
                         getMessageResult.getMessageCount());
 
@@ -408,14 +435,19 @@ public class PullMessageProcessor extends AsyncNettyRequestProcessor implements 
                         getMessageResult.getBufferTotalSize());
 
                     this.brokerController.getBrokerStatsManager().incBrokerGetNums(getMessageResult.getMessageCount());
+                    //是否读取消息到堆内存中，默认true
                     if (this.brokerController.getBrokerConfig().isTransferMsgByHeap()) {
+                        //从buffer中读取出消息转换为字节数组
                         final byte[] r = this.readGetMessageResult(getMessageResult, requestHeader.getConsumerGroup(), requestHeader.getTopic(), requestHeader.getQueueId());
                         this.brokerController.getBrokerStatsManager().incGroupGetLatency(requestHeader.getConsumerGroup(),
                             requestHeader.getTopic(), requestHeader.getQueueId(),
                             (int) (this.brokerController.getMessageStore().now() - beginTimeMills));
                         response.setBody(r);
                     } else {
+                        //采用堆外内存
                         try {
+                            //基于netty直接读取buffer传输，netty的0拷贝技术
+                            //地址：https://www.jianshu.com/p/3f9f56235d49
                             FileRegion fileRegion =
                                 new ManyMessageTransfer(response.encodeHeader(getMessageResult.getBufferTotalSize()), getMessageResult);
                             channel.writeAndFlush(fileRegion).addListener(new ChannelFutureListener() {
@@ -436,18 +468,26 @@ public class PullMessageProcessor extends AsyncNettyRequestProcessor implements 
                     }
                     break;
                 case ResponseCode.PULL_NOT_FOUND:
+                    //没有读取到消息，Broker中没有新消息
 
+                    //如果Broker支持挂起 + 客户端支持请求挂起
+                    //则broker挂起该请求一段时间，中间如果有消息到达则会唤醒请求拉取消息并返回
                     if (brokerAllowSuspend && hasSuspendFlag) {
+                        //broker最长的挂起时间，默认15s，该参数是消费者传递的
                         long pollingTimeMills = suspendTimeoutMillisLong;
+                        //允许长时间挂起，默认允许
                         if (!this.brokerController.getBrokerConfig().isLongPollingEnable()) {
+                            //设置挂起时间1s
                             pollingTimeMills = this.brokerController.getBrokerConfig().getShortPollingTimeMills();
                         }
 
                         String topic = requestHeader.getTopic();
                         long offset = requestHeader.getQueueOffset();
                         int queueId = requestHeader.getQueueId();
+                        //创建新的拉取请求
                         PullRequest pullRequest = new PullRequest(request, channel, pollingTimeMills,
                             this.brokerController.getMessageStore().now(), offset, subscriptionData, messageFilter);
+                        //通过pullRequestHoldService#suspendPullRequest方法提交PullRequest，该请求将会被挂起并异步处理
                         this.brokerController.getPullRequestHoldService().suspendPullRequest(topic, queueId, pullRequest);
                         response = null;
                         break;
@@ -456,8 +496,11 @@ public class PullMessageProcessor extends AsyncNettyRequestProcessor implements 
                 case ResponseCode.PULL_RETRY_IMMEDIATELY:
                     break;
                 case ResponseCode.PULL_OFFSET_MOVED:
+                    //读取的offset不正确，太大或者太小
+                    //如果broker不是SLAVE，或者是SLAVE，但是允许offset校验
                     if (this.brokerController.getMessageStoreConfig().getBrokerRole() != BrokerRole.SLAVE
                         || this.brokerController.getMessageStoreConfig().isOffsetCheckInSlave()) {
+                        //发布offset移除事件
                         MessageQueue mq = new MessageQueue();
                         mq.setTopic(requestHeader.getTopic());
                         mq.setQueueId(requestHeader.getQueueId());
@@ -490,11 +533,17 @@ public class PullMessageProcessor extends AsyncNettyRequestProcessor implements 
             response.setRemark("store getMessage return null");
         }
 
+        /**
+         * 1、拉取消息完毕之后，无论是否拉取到消息，只要broker支持挂起请求，并且consumer支持提交消费进度，并且当前broker不是SLAVE角色，
+         *     都会上报该消费者上一次的消费点位
+         * 2、另外消费者客户端也会定时每5s上报一次消费偏移量
+         */
         boolean storeOffsetEnable = brokerAllowSuspend;
         storeOffsetEnable = storeOffsetEnable && hasCommitOffsetFlag;
         storeOffsetEnable = storeOffsetEnable
             && this.brokerController.getMessageStoreConfig().getBrokerRole() != BrokerRole.SLAVE;
         if (storeOffsetEnable) {
+            //提交偏移量
             this.brokerController.getConsumerOffsetManager().commitOffset(RemotingHelper.parseChannelRemoteAddr(channel),
                 requestHeader.getConsumerGroup(), requestHeader.getTopic(), requestHeader.getQueueId(), requestHeader.getCommitOffset());
         }

@@ -16,10 +16,13 @@
  */
 package org.apache.rocketmq.broker.mqtrace;
 
+//消费者拉取消息的钩子函数。
 public interface ConsumeMessageHook {
     String hookName();
 
+    //Broker处理消费者拉取消息请求时的钩子函数。PullMessageProcessor中调用
     void consumeMessageBefore(final ConsumeMessageContext context);
 
+    //
     void consumeMessageAfter(final ConsumeMessageContext context);
 }
