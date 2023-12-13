@@ -103,14 +103,18 @@ public class MessageStoreConfig {
     private int commitCommitLogThoroughInterval = 200;
     private int flushConsumeQueueThoroughInterval = 1000 * 60;
     @ImportantField
+    //从内存中拉取消息最大消息大小 256KB
     private int maxTransferBytesOnMessageInMemory = 1024 * 256;
     @ImportantField
+    //从内存中拉取消息最大消息条数 32
     private int maxTransferCountOnMessageInMemory = 32;
     @ImportantField
     private int maxTransferBytesOnMessageInDisk = 1024 * 64;
     @ImportantField
+    //从磁盘中拉取消息最大消息条数 8
     private int maxTransferCountOnMessageInDisk = 8;
     @ImportantField
+    //broker最大可用内存为最大物理内存的百分之40
     private int accessMessageInMemoryMaxRatio = 40;
     @ImportantField
     private boolean messageIndexEnable = true;

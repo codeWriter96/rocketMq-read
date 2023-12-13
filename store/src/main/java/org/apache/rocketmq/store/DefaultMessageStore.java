@@ -600,7 +600,7 @@ public class DefaultMessageStore implements MessageStore {
         // lazy init when find msg.
         GetMessageResult getResult = null;
 
-        //获取当前commitLog的最大物理偏移量
+        //获取mappedFileQueue内的的最大物理偏移量
         final long maxOffsetPy = this.commitLog.getMaxOffset();
 
         //找到与topic和queueId匹配的消费者队列
@@ -712,7 +712,7 @@ public class DefaultMessageStore implements MessageStore {
                                 }
                             }
 
-                            /**
+                            /*
                              * Broker内的TAG过滤
                              * broker获取对应ConsumerQueue里hashcode(tag)后根据消费端传入的tag进行比较，
                              * 如果不匹配则将此消息跳过；如果匹配消费端还要进行一次tag的比较，因为会有可能出现了hash冲突
@@ -727,72 +727,103 @@ public class DefaultMessageStore implements MessageStore {
                                 continue;
                             }
 
+                            //TAG校验通过，调用commitLog#getMessage方法根据消息的物理偏移量和消息大小获取该索引对应的真正的消息
                             SelectMappedBufferResult selectResult = this.commitLog.getMessage(offsetPy, sizePy);
                             if (null == selectResult) {
+                                //没找到消息，该偏移量可能到达了文件末尾，消息存放在下一个commitLog文件中
                                 if (getResult.getBufferTotalSize() == 0) {
                                     status = GetMessageStatus.MESSAGE_WAS_REMOVING;
                                 }
 
+                                //nextPhyFileStartOffset设置为下一个commitLog文件的起始物理偏移量，并跳过本次拉取
                                 nextPhyFileStartOffset = this.commitLog.rollNextFile(offsetPy);
                                 continue;
                             }
-
+                            /*
+                             * 找到了消息，继续通过messageFilter#isMatchedByCommitLog方法执行消息SQL92 过滤
+                             * SQL92 过滤依赖于消息中的属性，而消息体的内容存放在commitLog中的，因此需要先拉取到消息，在进行SQL92过滤
+                             */
                             if (messageFilter != null
                                 && !messageFilter.isMatchedByCommitLog(selectResult.getByteBuffer().slice(), null)) {
                                 if (getResult.getBufferTotalSize() == 0) {
                                     status = GetMessageStatus.NO_MATCHED_MESSAGE;
                                 }
                                 // release...
+                                //过滤不通过，释放这一段内存，并跳过本次拉取
                                 selectResult.release();
                                 continue;
                             }
 
+                            //传输的单条消息数量自增1，用于展示
                             this.storeStatsService.getGetMessageTransferedMsgCount().add(1);
+                            //TAG和SQL92校验通过，那么将当前消息存入getResult
                             getResult.addMessage(selectResult);
+                            //更改status
                             status = GetMessageStatus.FOUND;
+                            //nextPhyFileStartOffset重新置为Long.MIN_VALUE，继续下一次循环
                             nextPhyFileStartOffset = Long.MIN_VALUE;
                         }
 
+                        //需要记录commitLog磁盘的剩余可拉取的消息字节数
                         if (diskFallRecorded) {
+                            //当前mappedFileQueue中剩余可拉取的消息字节数 = 当前最大物理偏移量 - 本次消息拉取的最大物理偏移量
                             long fallBehind = maxOffsetPy - maxPhyOffsetPulling;
+                            //记录剩余的commitLog磁盘可拉取的消息字节数
                             brokerStatsManager.recordDiskFallBehindSize(group, topic, queueId, fallBehind);
                         }
-
+                        //计算下一次读取数据的ConsumeQueue的开始偏移量，判断是否建议下一次从SLAVE broker中拉取消息
+                        //计算下一次读取数据的ConsumeQueue的开始偏移量
                         nextBeginOffset = offset + (i / ConsumeQueue.CQ_STORE_UNIT_SIZE);
 
+                        //当前mappedFileQueue中剩余可拉取的消息字节数
                         long diff = maxOffsetPy - maxPhyOffsetPulling;
+                        //broker服务最大可使用物理内存
                         long memory = (long) (StoreUtil.TOTAL_PHYSICAL_MEMORY_SIZE
                             * (this.messageStoreConfig.getAccessMessageInMemoryMaxRatio() / 100.0));
+                        //如果剩余的commitLog磁盘可拉取的消息字节数 > broker服务最大可使用物理内存，
+                        //那么设置建议下一次从SLAVE broker中拉取消息
                         getResult.setSuggestPullingFromSlave(diff > memory);
                     } finally {
 
+                        //buffer内存释放
                         bufferConsumeQueue.release();
                     }
                 } else {
+                    //没获取到缓存buffer，可能是到达了当前consumeQueue文件的尾部
                     status = GetMessageStatus.OFFSET_FOUND_NULL;
+                    //nextBeginOffset设置为consumeQueue的下一个文件的起始偏移量
                     nextBeginOffset = nextOffsetCorrection(offset, consumeQueue.rollNextFile(offset));
                     log.warn("consumer request topic: " + topic + "offset: " + offset + " minOffset: " + minOffset + " maxOffset: "
                         + maxOffset + ", but access logic queue failed.");
                 }
             }
         } else {
+            //没找到consumeQueue
             status = GetMessageStatus.NO_MATCHED_LOGIC_QUEUE;
+            //nextBeginOffset设置为0
             nextBeginOffset = nextOffsetCorrection(offset, 0);
         }
 
         if (GetMessageStatus.FOUND == status) {
+            //找到了消息，那么拉取到的次数统计字段getMessageTimesTotalFound+1，用于控制台展示
+            //broker中的tps只计算拉取次数，而非拉取的消息条数，默认情况下pushConsumer一次拉取32条
             this.storeStatsService.getGetMessageTimesTotalFound().add(1);
         } else {
+            //未找到消息，那么未拉取到的次数统计字段getMessageTimesTotalMiss+1，用于控制台展示
             this.storeStatsService.getGetMessageTimesTotalMiss().add(1);
         }
+        //计算本次拉取消耗的时间
         long elapsedTime = this.getSystemClock().now() - beginTime;
+        //尝试比较并更新最长的拉取消息的时间字段getMessageEntireTimeMax
         this.storeStatsService.setGetMessageEntireTimeMax(elapsedTime);
 
         // lazy init no data found.
         if (getResult == null) {
+            //没找到消息的情况，延迟初始化GetMessageResult，设置拉取结果为0
             getResult = new GetMessageResult(0);
         }
 
+        //getResult赋值
         getResult.setStatus(status);
         getResult.setNextBeginOffset(nextBeginOffset);
         getResult.setMaxOffset(maxOffset);
@@ -1350,33 +1381,59 @@ public class DefaultMessageStore implements MessageStore {
     }
 
     private boolean checkInDiskByCommitOffset(long offsetPy, long maxOffsetPy) {
+        //获取broker最大可用内存，默认为 机器物理最大可用内存 * 40/100 ， 即broker最大可用内存为最大物理内存的百分之40
         long memory = (long) (StoreUtil.TOTAL_PHYSICAL_MEMORY_SIZE * (this.messageStoreConfig.getAccessMessageInMemoryMaxRatio() / 100.0));
+        //如果commitLog中的最大物理偏移量 - 拉取的消息在commitLog中的物理偏移量 的差值 > 获取broker最大可用内存，
+        // 那么任务数据已经在磁盘上了(内存放不下了)，否则认为还在内存中
         return (maxOffsetPy - offsetPy) > memory;
     }
 
+    /**
+     * 判断是否达到了消息拉取的上限
+     *
+     * @param sizePy       本次消息字节大小，
+     * @param maxMsgNums   要查询的最大消息数，默认32
+     * @param bufferTotal  已拉取的消息总大小
+     * @param messageTotal 已拉取的消息总数量
+     * @param isInDisk     本次消息是否在磁盘上
+     * @return 是否达到了消息拉取的上限
+     */
     private boolean isTheBatchFull(int sizePy, int maxMsgNums, int bufferTotal, int messageTotal, boolean isInDisk) {
 
+        //已拉取的消息总大小 || 已拉取的消息总数量 = 0
         if (0 == bufferTotal || 0 == messageTotal) {
             return false;
         }
 
+        //已拉取的消息总数量超过上限
         if (maxMsgNums <= messageTotal) {
             return true;
         }
 
+        //消息在磁盘中
         if (isInDisk) {
+            //如果已拉取消息字节数 + 当前消息的字节大小 > maxTransferBytesOnMessageInDisk = 64KB ，则返回true
+            //表示从磁盘上拉取消息的大小超过了阈值64KB
             if ((bufferTotal + sizePy) > this.messageStoreConfig.getMaxTransferBytesOnMessageInDisk()) {
                 return true;
             }
 
+            //如果已拉取的消息总数量 > maxTransferCountOnMessageInDisk - 1= 8 - 1，则返回true
+            //表示从磁盘上拉取消息的数量超过了阈值8条
             if (messageTotal > this.messageStoreConfig.getMaxTransferCountOnMessageInDisk() - 1) {
                 return true;
             }
-        } else {
+        }
+        //消息在内存中
+        else {
+            //如果已拉取消息字节数 + 待拉取的当前消息的字节大小 大于 maxTransferBytesOnMessageInMemory = 256KB ，则返回true
+            //表示从内存中拉取消息的大小超过了阈值256KB
             if ((bufferTotal + sizePy) > this.messageStoreConfig.getMaxTransferBytesOnMessageInMemory()) {
                 return true;
             }
 
+            //如果已拉取的消息总数量 > maxTransferCountOnMessageInMemory - 1= 32 - 1，则返回true
+            //表示从磁盘上拉取消息的数量超过了阈值32条
             if (messageTotal > this.messageStoreConfig.getMaxTransferCountOnMessageInMemory() - 1) {
                 return true;
             }

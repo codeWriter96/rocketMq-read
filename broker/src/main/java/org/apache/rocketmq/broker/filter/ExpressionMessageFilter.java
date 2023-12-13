@@ -138,13 +138,16 @@ public class ExpressionMessageFilter implements MessageFilter {
         }
 
         if (tempProperties == null && msgBuffer != null) {
+            //解码消息中的SQL属性
             tempProperties = MessageDecoder.decodeProperties(msgBuffer);
         }
 
         Object ret = null;
         try {
+            //构建SQL92消息过滤上下文
             MessageEvaluationContext context = new MessageEvaluationContext(tempProperties);
 
+            //进行SQL92消息过滤
             ret = realFilterData.getCompiledExpression().evaluate(context);
         } catch (Throwable e) {
             log.error("Message Filter error, " + realFilterData + ", " + tempProperties, e);
