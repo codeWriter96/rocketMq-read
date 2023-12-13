@@ -44,6 +44,8 @@ public class Message implements Serializable {
         this.body = body;
 
         if (tags != null && tags.length() > 0) {
+            //基于TAG模式的消息过滤，消息的Tag标签
+            //生产者在发送消息时，设置消息的Tag标签，消费者需指定已有的Tag标签来进行匹配订阅
             this.setTags(tags);
         }
 

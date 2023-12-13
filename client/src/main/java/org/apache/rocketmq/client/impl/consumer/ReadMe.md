@@ -30,5 +30,7 @@
 
 **RocketMQ消息过滤**
 消息过滤包括基于《表达式过滤》与基于《类模式》两种过滤模式。其中表达式过滤又分为《TAG》和《SQL92模式》
-
 地址：https://www.jianshu.com/p/00d010c8d1f5/
+
+SQL过滤：在broker端进行，可以减少无用数据的网络传输但broker压力会大，性能低，支持使用SQL语句复杂的过滤逻辑。
+TAG过滤：在broker与consumer端进行，增加无用数据的网络传输但broker压力小，性能高，只支持简单的过滤。

@@ -39,7 +39,9 @@ public class DefaultMessageFilter implements MessageFilter {
             return true;
         }
 
-        return subscriptionData.getSubString().equals(SubscriptionData.SUB_ALL)
+        return
+                //TAG为全部订阅
+                subscriptionData.getSubString().equals(SubscriptionData.SUB_ALL)
             || subscriptionData.getCodeSet().contains(tagsCode.intValue());
     }
 
