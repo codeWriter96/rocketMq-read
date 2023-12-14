@@ -538,6 +538,7 @@ public class PullMessageProcessor extends AsyncNettyRequestProcessor implements 
          *     都会上报该消费者上一次的消费点位
          * 2、另外消费者客户端也会定时每5s上报一次消费偏移量
          */
+        //挂起被唤醒的请求不允许提交偏移量，因为brokerAllowSuspend为false
         boolean storeOffsetEnable = brokerAllowSuspend;
         storeOffsetEnable = storeOffsetEnable && hasCommitOffsetFlag;
         storeOffsetEnable = storeOffsetEnable

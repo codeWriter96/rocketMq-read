@@ -129,12 +129,15 @@ public class ConsumerOffsetManager extends ConfigManager {
     }
 
     private void commitOffset(final String clientHost, final String key, final int queueId, final long offset) {
+        //获取topic@group对应的所有queue的消费偏移量map
         ConcurrentMap<Integer, Long> map = this.offsetTable.get(key);
         if (null == map) {
             map = new ConcurrentHashMap<Integer, Long>(32);
+            //存入map，key为queueId value为offSet
             map.put(queueId, offset);
             this.offsetTable.put(key, map);
         } else {
+            //存入map，key为queueId value为offSet
             Long storeOffset = map.put(queueId, offset);
             if (storeOffset != null && offset < storeOffset) {
                 log.warn("[NOTIFYME]update consumer offset less than store. clientHost={}, key={}, queueId={}, requestOffset={}, storeOffset={}", clientHost, key, queueId, offset, storeOffset);

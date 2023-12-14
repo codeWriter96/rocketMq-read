@@ -58,3 +58,13 @@ TAG过滤：在broker与consumer端进行，增加无用数据的网络传输但
 2、ReputMessageService线程调用：
     当有新的消息到达时，在DefaultMessageStore#doReput方法对于新的消息执行重放的过程中，
     会对等待对应topic@queueId的所有PullRequest执行notifyMessageArriving方法。doReput方法每1ms执行一次。
+    
+**Broker端commitOffset上报消费offset和offset刷盘时机**
+1、在执行processRequest方法的最后，只要broker支持挂起请求（新的拉取请求为true，但是已被suspend的请求将会是false，即要求是首次拉取），
+并且consumer支持提交消费进度（consumer如果是集群消费模式，那么就会支持提交消费进度），
+并且当前broker不是SLAVE角色，那么通过ConsumerOffsetManager#commitOffset方法提交消费进度偏移量；
+
+2、BrokerController中启动的定时调度任务，有一个任务每隔5s将消费者offset进行持久化
+
+提交偏移量实际上就是将新的偏移量存入ConsumerOffsetManager的offsetTable中。
+该缓存对应着磁盘上的{user.home}/store/config/consumerOffset.json文件
