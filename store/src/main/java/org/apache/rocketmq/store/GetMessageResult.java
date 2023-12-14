@@ -89,8 +89,11 @@ public class GetMessageResult {
     }
 
     public void addMessage(final SelectMappedBufferResult mapedBuffer) {
+        //mappedBuffer加入到集合中
         this.messageMapedList.add(mapedBuffer);
+        ////byteBuffer加入到集合中
         this.messageBufferList.add(mapedBuffer.getByteBuffer());
+        //已拉取的消息总大小加上当前消息的大小
         this.bufferTotalSize += mapedBuffer.getSize();
         this.msgCount4Commercial += (int) Math.ceil(
             mapedBuffer.getSize() / BrokerStatsManager.SIZE_PER_COUNT);

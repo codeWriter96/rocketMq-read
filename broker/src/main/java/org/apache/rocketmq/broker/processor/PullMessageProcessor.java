@@ -625,18 +625,26 @@ public class PullMessageProcessor extends AsyncNettyRequestProcessor implements 
         }
     }
 
+    //唤醒后执行拉取操作
     public void executeRequestWhenWakeup(final Channel channel,
         final RemotingCommand request) throws RemotingCommandException {
         Runnable run = new Runnable() {
             @Override
             public void run() {
                 try {
+                    /*
+                     * 再一次调用processRequest方法
+                     * 这里的brokerAllowSuspend参数为false，也就是说，本次请求如果没有拉取到消息，那么不会再挂起
+                     */
                     final RemotingCommand response = PullMessageProcessor.this.processRequest(channel, request, false);
 
                     if (response != null) {
+                        //获取请求id，通过id可以获取请求结果
                         response.setOpaque(request.getOpaque());
+                        //标记响应状态
                         response.markResponseType();
                         try {
+                            //将响应写回给客户端
                             channel.writeAndFlush(response).addListener(new ChannelFutureListener() {
                                 @Override
                                 public void operationComplete(ChannelFuture future) throws Exception {
@@ -659,6 +667,7 @@ public class PullMessageProcessor extends AsyncNettyRequestProcessor implements 
                 }
             }
         };
+        //通过pullMessageExecutor线程池异步的处理拉取消息的请求
         this.brokerController.getPullMessageExecutor().submit(new RequestTask(run, channel, request));
     }
 

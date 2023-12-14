@@ -34,3 +34,11 @@
 
 SQL过滤：在broker端进行，可以减少无用数据的网络传输但broker压力会大，性能低，支持使用SQL语句复杂的过滤逻辑。
 TAG过滤：在broker与consumer端进行，增加无用数据的网络传输但broker压力小，性能高，只支持简单的过滤。
+
+**notifyMessageArriving方法调用情况**
+1、PullRequestHoldService线程定时调用：
+    长轮询：最多挂起15s，每隔5s对所有PullRequest执行notifyMessageArriving方法。
+    短轮询：最多挂起1s，每隔1s对所有PullRequest执行notifyMessageArriving方法。
+2、ReputMessageService线程调用：
+    当有新的消息到达时，在DefaultMessageStore#doReput方法对于新的消息执行重放的过程中，
+    会对等待对应topic@queueId的所有PullRequest执行notifyMessageArriving方法。doReput方法每1ms执行一次。

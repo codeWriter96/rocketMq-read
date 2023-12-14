@@ -2221,6 +2221,7 @@ public class DefaultMessageStore implements MessageStore {
                                             dispatchRequest.getQueueId(), dispatchRequest.getConsumeQueueOffset() + 1,
                                             dispatchRequest.getTagsCode(), dispatchRequest.getStoreTimestamp(),
                                             dispatchRequest.getBitMap(), dispatchRequest.getPropertiesMap());
+                                        //通知有新的消息到到达了该消息队列，其对应挂起的PullRequest可以进行消息拉取了
                                         notifyMessageArrive4MultiQueue(dispatchRequest);
                                     }
 

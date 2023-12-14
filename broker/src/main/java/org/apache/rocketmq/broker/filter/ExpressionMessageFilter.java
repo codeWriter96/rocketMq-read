@@ -57,29 +57,38 @@ public class ExpressionMessageFilter implements MessageFilter {
         }
     }
 
+    //通过tagsCode或bitmap filter进行tagsCode匹配
     @Override
     public boolean isMatchedByConsumeQueue(Long tagsCode, ConsumeQueueExt.CqExtUnit cqExtUnit) {
+        //如果订阅信息对象为null，则返回true
         if (null == subscriptionData) {
             return true;
         }
 
+        //如果是classFilter模式的过滤，则返回true
         if (subscriptionData.isClassFilterMode()) {
             return true;
         }
 
         // by tags code.
+        //如果是TAG类型的过滤子表达式
         if (ExpressionType.isTagType(subscriptionData.getExpressionType())) {
 
+            //如果tagsCode为null，则返回true
             if (tagsCode == null) {
                 return true;
             }
 
+            //如果订阅表达式为"*"，即表示订阅所有消息，那么返回true
             if (subscriptionData.getSubString().equals(SubscriptionData.SUB_ALL)) {
                 return true;
             }
 
+            //如果订阅关系对象的codeSet集合包含tagsCode值，表示子表达式订阅了该tag的消息，返回true，否则返回false
             return subscriptionData.getCodeSet().contains(tagsCode.intValue());
-        } else {
+        }
+        //依靠BloomFilter，布隆过滤器来实现过滤
+        else {
             // no expression or no bloom
             if (consumerFilterData == null || consumerFilterData.getExpression() == null
                 || consumerFilterData.getCompiledExpression() == null || consumerFilterData.getBloomFilterData() == null) {

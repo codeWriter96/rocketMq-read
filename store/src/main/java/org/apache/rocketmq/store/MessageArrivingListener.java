@@ -19,6 +19,7 @@ package org.apache.rocketmq.store;
 
 import java.util.Map;
 
+//Broker产生新的 ConsumeQueue 记录的监听器（新消息构建了ConsumeQueue索引）
 public interface MessageArrivingListener {
 
     /**
