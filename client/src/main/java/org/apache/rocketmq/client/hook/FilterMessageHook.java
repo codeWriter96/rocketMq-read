@@ -16,8 +16,10 @@
  */
 package org.apache.rocketmq.client.hook;
 
+//在 MQ 自身消息过滤完毕后，允许用户自定义消息过滤钩子函数，进行消费者端消息过滤
 public interface FilterMessageHook {
     String hookName();
 
+    //过滤消息方法
     void filterMessage(final FilterMessageContext context);
 }

@@ -30,6 +30,7 @@ import org.apache.rocketmq.common.utils.ThreadUtils;
 //Push模式下，消息拉取由PullMessageService服务实现，PullMessageService继承了ServiceThread，因此他也是一个异步线程任务。
 public class PullMessageService extends ServiceThread {
     private final InternalLogger log = ClientLogger.getLog();
+    //消费者拉取消息的请求PullRequest队列。由run()方法不停拉取消息
     private final LinkedBlockingQueue<PullRequest> pullRequestQueue = new LinkedBlockingQueue<PullRequest>();
     private final MQClientInstance mQClientFactory;
     private final ScheduledExecutorService scheduledExecutorService = Executors

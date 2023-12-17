@@ -39,6 +39,7 @@ import org.apache.rocketmq.common.protocol.body.ProcessQueueInfo;
 
 /**
  * Queue consumption snapshot
+ * ProcessQueue 就是 MessageQueue 的消费快照，msgTreeMap 里面存储了消费者拉取到的消息
  */
 public class ProcessQueue {
     public final static long REBALANCE_LOCK_MAX_LIVE_TIME =
@@ -58,6 +59,7 @@ public class ProcessQueue {
     private final TreeMap<Long, MessageExt> consumingMsgOrderlyTreeMap = new TreeMap<Long, MessageExt>();
     private final AtomicLong tryUnlockTimes = new AtomicLong(0);
     private volatile long queueOffsetMax = 0L;
+    //是否废弃。废弃后将无法消费，也无法拉取消息
     private volatile boolean dropped = false;
     private volatile long lastPullTimestamp = System.currentTimeMillis();
     private volatile long lastConsumeTimestamp = System.currentTimeMillis();
@@ -131,13 +133,16 @@ public class ProcessQueue {
         }
     }
 
+    //存储消息到msgTreeMap
     public boolean putMessage(final List<MessageExt> msgs) {
         boolean dispatchToConsume = false;
         try {
+            //加写锁
             this.treeMapLock.writeLock().lockInterruptibly();
             try {
                 int validMsgCnt = 0;
                 for (MessageExt msg : msgs) {
+                    //当该消息的偏移量以及该消息存入msgTreeMap
                     MessageExt old = msgTreeMap.put(msg.getQueueOffset(), msg);
                     if (null == old) {
                         validMsgCnt++;
@@ -147,6 +152,8 @@ public class ProcessQueue {
                 }
                 msgCount.addAndGet(validMsgCnt);
 
+                //当前processQueue的内部的msgTreeMap中有消息并且consuming=false，
+                // 即还没有开始消费时，dispatchToConsume = true，consuming = true
                 if (!msgTreeMap.isEmpty() && !this.consuming) {
                     dispatchToConsume = true;
                     this.consuming = true;

@@ -67,20 +67,26 @@ public class PullAPIWrapper {
         this.unitMode = unitMode;
     }
 
+    //消费者处理拉取消息结果，进行消息解码、过滤以及设置其他属性的操作
     public PullResult processPullResult(final MessageQueue mq, final PullResult pullResult,
         final SubscriptionData subscriptionData) {
         PullResultExt pullResultExt = (PullResultExt) pullResult;
 
+        //更新下次拉取建议的brokerId，下次拉取消息时从pullFromWhichNodeTable中直接取出
         this.updatePullFromWhichNode(mq, pullResultExt.getSuggestWhichBrokerId());
         if (PullStatus.FOUND == pullResult.getPullStatus()) {
+            //二进制字节数组进行解码转换为java的List<MessageExt>消息集合
             ByteBuffer byteBuffer = ByteBuffer.wrap(pullResultExt.getMessageBinary());
             List<MessageExt> msgList = MessageDecoder.decodes(byteBuffer);
 
             List<MessageExt> msgListFilterAgain = msgList;
+            //如果存在tag，并且不是classFilterMode，那么按照tag过滤消息
+            //消费者端，再次进行 TAG 过滤。防止Broker端的哈希冲突
             if (!subscriptionData.getTagsSet().isEmpty() && !subscriptionData.isClassFilterMode()) {
                 msgListFilterAgain = new ArrayList<MessageExt>(msgList.size());
                 for (MessageExt msg : msgList) {
                     if (msg.getTags() != null) {
+                        //这采用String#equals方法过滤，而broker端则是比较的tagHash值，即hashCode
                         if (subscriptionData.getTagsSet().contains(msg.getTags())) {
                             msgListFilterAgain.add(msg);
                         }
@@ -88,6 +94,7 @@ public class PullAPIWrapper {
                 }
             }
 
+            //如果有消息过滤钩子，那么执行钩子方法，这里可以扩展自定义的消息过滤的逻辑
             if (this.hasHook()) {
                 FilterMessageContext filterMessageContext = new FilterMessageContext();
                 filterMessageContext.setUnitMode(unitMode);
@@ -95,27 +102,34 @@ public class PullAPIWrapper {
                 this.executeHook(filterMessageContext);
             }
 
+            //遍历过滤通过的消息，设置响应属性
             for (MessageExt msg : msgListFilterAgain) {
+                //是否事务消息
                 String traFlag = msg.getProperty(MessageConst.PROPERTY_TRANSACTION_PREPARED);
                 if (Boolean.parseBoolean(traFlag)) {
                     msg.setTransactionId(msg.getProperty(MessageConst.PROPERTY_UNIQ_CLIENT_MESSAGE_ID_KEYIDX));
                 }
+                //将响应中的最小和最大偏移量存入msg
                 MessageAccessor.putProperty(msg, MessageConst.PROPERTY_MIN_OFFSET,
                     Long.toString(pullResult.getMinOffset()));
                 MessageAccessor.putProperty(msg, MessageConst.PROPERTY_MAX_OFFSET,
                     Long.toString(pullResult.getMaxOffset()));
+                //设置BrokerName
                 msg.setBrokerName(mq.getBrokerName());
             }
 
             pullResultExt.setMsgFoundList(msgListFilterAgain);
         }
 
+        //6 因为消息已经被解析了，那么设置消息的字节数组为null，释放内存
         pullResultExt.setMessageBinary(null);
 
         return pullResult;
     }
 
+    //更新下次拉取建议的brokerId，下次拉取消息时从pullFromWhichNodeTable中直接取出
     public void updatePullFromWhichNode(final MessageQueue mq, final long brokerId) {
+        //更新下次拉取建议的brokerId
         AtomicLong suggest = this.pullFromWhichNodeTable.get(mq);
         if (null == suggest) {
             this.pullFromWhichNodeTable.put(mq, new AtomicLong(brokerId));
