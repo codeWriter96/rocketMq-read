@@ -78,20 +78,27 @@ public class ProcessQueue {
 
     /**
      * @param pushConsumer
+     * 清理过期消息
      */
     public void cleanExpiredMsg(DefaultMQPushConsumer pushConsumer) {
+        //如果是顺序消费，直接返回，只有并发消费才会清理
         if (pushConsumer.getDefaultMQPushConsumerImpl().isConsumeOrderly()) {
             return;
         }
 
+        //一次循环最多处理16个消息
         int loop = msgTreeMap.size() < 16 ? msgTreeMap.size() : 16;
         for (int i = 0; i < loop; i++) {
             MessageExt msg = null;
             try {
+                //加读锁
                 this.treeMapLock.readLock().lockInterruptibly();
                 try {
                     if (!msgTreeMap.isEmpty()) {
+                        //获取msgTreeMap中的第一次元素的起始消费时间，msgTreeMap是一个红黑树，
+                        // 第一个节点就是最早进入的消息，offset最小的节点
                         String consumeStartTimeStamp = MessageAccessor.getConsumeStartTimeStamp(msgTreeMap.firstEntry().getValue());
+                        //如果消费时间距离现在时间超过默认15min，那么获取这个msg
                         if (StringUtils.isNotEmpty(consumeStartTimeStamp) && System.currentTimeMillis() - Long.parseLong(consumeStartTimeStamp) > pushConsumer.getConsumeTimeout() * 60 * 1000) {
                             msg = msgTreeMap.firstEntry().getValue();
                         } else {
@@ -109,13 +116,17 @@ public class ProcessQueue {
 
             try {
 
+                //将过期消息发回broker延迟topic，将在给定延迟时间（默认从level3，即10s开始）之后进行重试消费
                 pushConsumer.sendMessageBack(msg, 3);
                 log.info("send expire msg back. topic={}, msgId={}, storeHost={}, queueId={}, queueOffset={}", msg.getTopic(), msg.getMsgId(), msg.getStoreHost(), msg.getQueueId(), msg.getQueueOffset());
                 try {
+                    //加写锁
                     this.treeMapLock.writeLock().lockInterruptibly();
                     try {
+                        //过期消息没有被移除
                         if (!msgTreeMap.isEmpty() && msg.getQueueOffset() == msgTreeMap.firstKey()) {
                             try {
+                                //真正移除过期消息
                                 removeMessage(Collections.singletonList(msg));
                             } catch (Exception e) {
                                 log.error("send expired msg exception", e);
@@ -196,6 +207,7 @@ public class ProcessQueue {
         return 0;
     }
 
+    //移除消息
     public long removeMessage(final List<MessageExt> msgs) {
         long result = -1;
         final long now = System.currentTimeMillis();

@@ -59,6 +59,7 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
     private final String consumerGroup;
 
     private final ScheduledExecutorService scheduledExecutorService;
+    //单线程定时任务线程：清除过期消息线程
     private final ScheduledExecutorService cleanExpireMsgExecutors;
 
     public ConsumeMessageConcurrentlyService(DefaultMQPushConsumerImpl defaultMQPushConsumerImpl,
@@ -88,7 +89,10 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
         this.cleanExpireMsgExecutors = Executors.newSingleThreadScheduledExecutor(new ThreadFactoryImpl("CleanExpireMsgScheduledThread_"));
     }
 
+    //并发消费线程启动
     public void start() {
+        //通过cleanExpireMsgExecutors定时任务清理过期的消息
+        //启动后15min开始执行，后每15min执行一次，这里的15min时RocketMQ大的默认超时时间，可通过defaultMQPushConsumer#consumeTimeout属性设置
         this.cleanExpireMsgExecutors.scheduleAtFixedRate(new Runnable() {
 
             @Override
@@ -228,12 +232,15 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
     }
 
 
+    //清理过期消息
     private void cleanExpireMsg() {
+        //获取所有的消息队列和处理队列的键值对
         Iterator<Map.Entry<MessageQueue, ProcessQueue>> it =
             this.defaultMQPushConsumerImpl.getRebalanceImpl().getProcessQueueTable().entrySet().iterator();
         while (it.hasNext()) {
             Map.Entry<MessageQueue, ProcessQueue> next = it.next();
             ProcessQueue pq = next.getValue();
+            //清理过期消息
             pq.cleanExpiredMsg(this.defaultMQPushConsumer);
         }
     }
