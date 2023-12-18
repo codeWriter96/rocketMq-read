@@ -223,6 +223,8 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
 
     /**
      * Batch consumption size
+     * 消费者consumeExecutor线程池单次批量处理消息数量。影响ConsumeRequest.msgs
+     * 如果把它设置为其他值n，无论是并发消费还是顺序消费，每次的consumeMessage的执行，msgs集合默认都最多只有n条消息
      */
     private int consumeMessageBatchMaxSize = 1;
 
@@ -258,6 +260,7 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
 
     /**
      * Maximum amount of time in minutes a message may block the consuming thread.
+     * 消费者消费消息的最大时间，超过则视为消费超时
      */
     private long consumeTimeout = 15;
 
