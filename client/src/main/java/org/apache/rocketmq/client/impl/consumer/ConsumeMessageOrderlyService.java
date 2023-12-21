@@ -60,9 +60,13 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
     private final DefaultMQPushConsumer defaultMQPushConsumer;
     private final MessageListenerOrderly messageListener;
     private final BlockingQueue<Runnable> consumeRequestQueue;
+
+    //顺序消费的线程池
     private final ThreadPoolExecutor consumeExecutor;
     private final String consumerGroup;
     private final MessageQueueLock messageQueueLock = new MessageQueueLock();
+
+    //单线程的线程池。用于定时执行锁定请求以及延迟提交新的消费请求
     private final ScheduledExecutorService scheduledExecutorService;
     private volatile boolean stopped = false;
 
@@ -92,8 +96,12 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
         this.scheduledExecutorService = Executors.newSingleThreadScheduledExecutor(new ThreadFactoryImpl("ConsumeMessageScheduledThread_"));
     }
 
+    //启动服务
     public void start() {
+        //如果是集群模式
         if (MessageModel.CLUSTERING.equals(ConsumeMessageOrderlyService.this.defaultMQPushConsumerImpl.messageModel())) {
+            //启动一个定时任务，启动后1s执行，后续每20s执行一次
+            //尝试对所有分配给当前consumer的队列，请求broker端的消息队列锁，保证同时只有一个消费端可以消费。
             this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
                 @Override
                 public void run() {
@@ -203,14 +211,19 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
         return result;
     }
 
+    //提交消费请求
     @Override
     public void submitConsumeRequest(
         final List<MessageExt> msgs,
         final ProcessQueue processQueue,
         final MessageQueue messageQueue,
         final boolean dispathToConsume) {
+        //是否分发消费
+        //如果分发消费，那么将创建一个ConsumeRequest 提交到ConsumeMessageOrderlyService内部的consumeExecutor线程池中进行异步消费
         if (dispathToConsume) {
+            //构建消费请求
             ConsumeRequest consumeRequest = new ConsumeRequest(processQueue, messageQueue);
+            //将请求提交到consumeExecutor线程池中进行消费
             this.consumeExecutor.submit(consumeRequest);
         }
     }
@@ -405,6 +418,7 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
         }
     }
 
+    //消费请求数据结构
     class ConsumeRequest implements Runnable {
         private final ProcessQueue processQueue;
         private final MessageQueue messageQueue;
@@ -422,14 +436,19 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
             return messageQueue;
         }
 
+        //顺序消费
         @Override
         public void run() {
+            //当前队列废弃，直接返回
             if (this.processQueue.isDropped()) {
                 log.warn("run, the message queue not be able to consume, because it's dropped. {}", this.messageQueue);
                 return;
             }
 
+            //消费消息之前先获取当前messageQueue的本地锁，防止并发
+            // 这将导致ConsumeMessageOrderlyService的线程池中的线程将不会同时并发的消费同一个队列
             final Object objLock = messageQueueLock.fetchLockObject(this.messageQueue);
+            //锁住当前对象
             synchronized (objLock) {
                 if (MessageModel.BROADCASTING.equals(ConsumeMessageOrderlyService.this.defaultMQPushConsumerImpl.messageModel())
                     || (this.processQueue.isLocked() && !this.processQueue.isLockExpired())) {
