@@ -248,6 +248,7 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
      * Max re-consume times. 
      * In concurrently mode, -1 means 16;
      * In orderly mode, -1 means Integer.MAX_VALUE.
+     * 消费者消费失败后，最大尝试重试发送消息给Broker的次数
      *
      * If messages are re-consumed more than {@link #maxReconsumeTimes} before success.
      */

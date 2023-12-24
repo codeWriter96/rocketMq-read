@@ -74,3 +74,13 @@ TAG过滤：在broker与consumer端进行，增加无用数据的网络传输但
 
 提交偏移量实际上就是将新的偏移量存入ConsumerOffsetManager的offsetTable中。
 该缓存对应着磁盘上的{user.home}/store/config/consumerOffset.json文件
+
+**消费失败消费者重试机制**
+1、并发消费模式
+1.1、广播模式
+消费失败情况，仅仅打印消费失败日志。
+1.2、集群模式
+消费失败情况，通过ConsumeMessageConcurrentlyService.sendMessageBack方法处理消费失败的消息，将该消息重新发送至Broker，延迟消费。
+
+2、顺序消费模式
+顺序消费的重试与broker无关，直接在本地延迟1s之后重新消费当前没有消费成功的消息。
