@@ -255,12 +255,13 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
 
     /**
      * Suspending pulling time for cases requiring slow pulling like flow-control scenario.
+     * 消费者延迟消费时间ms
      */
     private long suspendCurrentQueueTimeMillis = 1000;
 
     /**
      * Maximum amount of time in minutes a message may block the consuming thread.
-     * 消费者消费消息的最大时间，超过则视为消费超时
+     * 消费者消费消息的最大时间min，超过则视为消费超时
      */
     private long consumeTimeout = 15;
 

@@ -55,6 +55,7 @@ public class ProcessQueue {
     private final Lock consumeLock = new ReentrantLock();
     /**
      * A subset of msgTreeMap, will only be used when orderly consume
+     * 存放正在消费的消息
      */
     private final TreeMap<Long, MessageExt> consumingMsgOrderlyTreeMap = new TreeMap<Long, MessageExt>();
     private final AtomicLong tryUnlockTimes = new AtomicLong(0);
@@ -65,6 +66,7 @@ public class ProcessQueue {
     private volatile long lastConsumeTimestamp = System.currentTimeMillis();
     private volatile boolean locked = false;
     private volatile long lastLockTimestamp = System.currentTimeMillis();
+    //是否消费中
     private volatile boolean consuming = false;
     private volatile long msgAccCnt = 0;
 
@@ -269,6 +271,8 @@ public class ProcessQueue {
         this.locked = locked;
     }
 
+    //回滚消息
+    //将consumingMsgOrderlyTreeMap消费中的消息再丢回msgTreeMap
     public void rollback() {
         try {
             this.treeMapLock.writeLock().lockInterruptibly();
@@ -283,16 +287,23 @@ public class ProcessQueue {
         }
     }
 
+    //消费成功提交消息
     public long commit() {
         try {
+            //加锁
             this.treeMapLock.writeLock().lockInterruptibly();
             try {
+                //获取正在消费的消息map中的最大消息offset
                 Long offset = this.consumingMsgOrderlyTreeMap.lastKey();
+                //msgCount消息数量减去已消费的数量
                 msgCount.addAndGet(0 - this.consumingMsgOrderlyTreeMap.size());
+                //msgSize减去已经消费完成的消息大小
                 for (MessageExt msg : this.consumingMsgOrderlyTreeMap.values()) {
                     msgSize.addAndGet(0 - msg.getBody().length);
                 }
+                //清空正在消费的消息map
                 this.consumingMsgOrderlyTreeMap.clear();
+                //返回下一个offset，已消费完毕的最大offset + 1
                 if (offset != null) {
                     return offset + 1;
                 }
@@ -322,6 +333,9 @@ public class ProcessQueue {
         }
     }
 
+    //有序的拉取消息
+    //从processQueue内部的msgTreeMap有序map集合中获取offset最小的consumeBatchSize条消息，按
+    // 顺序从最小的offset返回，保证有序性
     public List<MessageExt> takeMessages(final int batchSize) {
         List<MessageExt> result = new ArrayList<MessageExt>(batchSize);
         final long now = System.currentTimeMillis();
@@ -331,9 +345,12 @@ public class ProcessQueue {
             try {
                 if (!this.msgTreeMap.isEmpty()) {
                     for (int i = 0; i < batchSize; i++) {
+                        //每次都拉取msgTreeMap中最小的一条消息
                         Map.Entry<Long, MessageExt> entry = this.msgTreeMap.pollFirstEntry();
                         if (entry != null) {
+                            //添加消息
                             result.add(entry.getValue());
+                            //将拉取到的消息存入consumingMsgOrderlyTreeMap中，表示正在消费的消息
                             consumingMsgOrderlyTreeMap.put(entry.getKey(), entry.getValue());
                         } else {
                             break;
@@ -341,6 +358,7 @@ public class ProcessQueue {
                     }
                 }
 
+                //如果没有拉取到任何一条消息，那么设置consuming为false，表示没有消息了，处于非消费状态
                 if (result.isEmpty()) {
                     consuming = false;
                 }

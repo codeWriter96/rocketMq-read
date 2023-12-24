@@ -126,6 +126,7 @@ public abstract class RebalanceImpl {
         return result;
     }
 
+    //向Broker发送Lock请求
     public boolean lock(final MessageQueue mq) {
         //获取指定brokerName的master地址
         FindBrokerResult findBrokerResult = this.mQClientFactory.findBrokerAddressInSubscribe(mq.getBrokerName(), MixAll.MASTER_ID, true);
