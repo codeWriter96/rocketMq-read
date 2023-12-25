@@ -641,6 +641,7 @@ public class CommitLog {
         return keyBuilder.toString();
     }
 
+    //Broker异步写入消息
     public CompletableFuture<PutMessageResult> asyncPutMessage(final MessageExtBrokerInner msg) {
         // Set the storage time
         msg.setStoreTimestamp(System.currentTimeMillis());
@@ -658,15 +659,23 @@ public class CommitLog {
         if (tranType == MessageSysFlag.TRANSACTION_NOT_TYPE
                 || tranType == MessageSysFlag.TRANSACTION_COMMIT_TYPE) {
             // Delay Delivery
+            //如果是 延迟消息
+            //消费者消费失败重新投递的会是延迟消息
+            //用户也可业务创建延迟消息
             if (msg.getDelayTimeLevel() > 0) {
+                //如果延迟等级大于最大延迟等级
                 if (msg.getDelayTimeLevel() > this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel()) {
+                    //置为最大值
                     msg.setDelayTimeLevel(this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel());
                 }
 
+                //将topic置为延迟队列
                 topic = TopicValidator.RMQ_SYS_SCHEDULE_TOPIC;
+                //将队列id取为：延迟等级 - 1
                 int queueId = ScheduleMessageService.delayLevel2QueueId(msg.getDelayTimeLevel());
 
                 // Backup real topic, queueId
+                //备份真实的topic和queueId到属性里
                 MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_TOPIC, msg.getTopic());
                 MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_QUEUE_ID, String.valueOf(msg.getQueueId()));
                 msg.setPropertiesString(MessageDecoder.messageProperties2String(msg.getProperties()));
