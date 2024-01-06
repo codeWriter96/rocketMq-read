@@ -23,6 +23,6 @@ public interface ConsumeMessageHook {
     //Broker处理消费者拉取消息请求时的钩子函数。PullMessageProcessor中调用
     void consumeMessageBefore(final ConsumeMessageContext context);
 
-    //
+    //Broker处理消费者消费消息失败，将消息回退Broker的钩子函数
     void consumeMessageAfter(final ConsumeMessageContext context);
 }

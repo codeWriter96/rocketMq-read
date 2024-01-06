@@ -27,6 +27,7 @@ public class MessageQueueLock {
     private ConcurrentMap<MessageQueue, Object> mqLockTable =
         new ConcurrentHashMap<MessageQueue, Object>();
 
+    //尝试从本地缓存中获取MessageQueue的锁
     public Object fetchLockObject(final MessageQueue mq) {
         Object objLock = this.mqLockTable.get(mq);
         if (null == objLock) {

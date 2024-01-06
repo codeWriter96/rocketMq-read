@@ -16,10 +16,13 @@
  */
 package org.apache.rocketmq.client.hook;
 
+//消费者消费消息的钩子函数。用户可实现后进行消息消费前后的钩子函数
 public interface ConsumeMessageHook {
     String hookName();
 
+    //前置消费消息钩子
     void consumeMessageBefore(final ConsumeMessageContext context);
 
+    //消费消息成功后钩子
     void consumeMessageAfter(final ConsumeMessageContext context);
 }

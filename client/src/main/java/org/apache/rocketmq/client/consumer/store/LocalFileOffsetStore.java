@@ -75,18 +75,31 @@ public class LocalFileOffsetStore implements OffsetStore {
         }
     }
 
+    /**
+     * RemoteBrokerOffsetStore的方法
+     * 更新内存中的offset
+     *
+     * @param mq           消息队列
+     * @param offset       偏移量
+     * @param increaseOnly 是否仅单调增加offset，顺序消费为false，并发消费为true(新的offset必须 > 旧的 才能更新成功)
+     */
     @Override
     public void updateOffset(MessageQueue mq, long offset, boolean increaseOnly) {
         if (mq != null) {
+            //获取已存在的offset
             AtomicLong offsetOld = this.offsetTable.get(mq);
             if (null == offsetOld) {
                 offsetOld = this.offsetTable.putIfAbsent(mq, new AtomicLong(offset));
             }
 
+            //如果有老的offset，那么尝试更新offset
             if (null != offsetOld) {
+                //如果仅单调增加offset，顺序消费为false，并发消费为true
                 if (increaseOnly) {
+                    //如果新的offset大于已存在offset，则尝试在循环中CAS的更新为新offset
                     MixAll.compareAndIncreaseOnly(offsetOld, offset);
                 } else {
+                    //直接设置为新offset，可能导致offset变小
                     offsetOld.set(offset);
                 }
             }

@@ -1151,17 +1151,23 @@ public class MQClientAPIImpl {
         throw new MQBrokerException(response.getCode(), response.getRemark(), addr);
     }
 
+    //批量向Broker锁定指定的MessageQueue，
+    //返回值为锁定成功的MessageQueue
     public Set<MessageQueue> lockBatchMQ(
         final String addr,
         final LockBatchRequestBody requestBody,
         final long timeoutMillis) throws RemotingException, MQBrokerException, InterruptedException {
+        //创建LOCK_BATCH_MQ请求
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.LOCK_BATCH_MQ, null);
 
         request.setBody(requestBody.encode());
+        //同步请求，调用brokerVIPChannel判断是否开启vip通道，
+        // 如果开启了，那么将brokerAddr的port – 2，因为vip通道的端口为普通端口 – 2。
         RemotingCommand response = this.remotingClient.invokeSync(MixAll.brokerVIPChannel(this.clientConfig.isVipChannelEnabled(), addr),
             request, timeoutMillis);
         switch (response.getCode()) {
             case ResponseCode.SUCCESS: {
+                //解码
                 LockBatchResponseBody responseBody = LockBatchResponseBody.decode(response.getBody(), LockBatchResponseBody.class);
                 Set<MessageQueue> messageQueues = responseBody.getLockOKMQSet();
                 return messageQueues;

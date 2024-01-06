@@ -982,6 +982,7 @@ public class MQClientInstance {
         return null;
     }
 
+    //获取指定brokerName的master地址。
     public FindBrokerResult findBrokerAddressInSubscribe(
         final String brokerName,
         final long brokerId,

@@ -35,6 +35,7 @@ import java.util.Map.Entry;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
+//消费者负载均衡
 public abstract class RebalanceImpl {
     protected static final InternalLogger log = ClientLogger.getLog();
     protected final ConcurrentMap<MessageQueue, ProcessQueue> processQueueTable = new ConcurrentHashMap<MessageQueue, ProcessQueue>(64);
@@ -125,6 +126,7 @@ public abstract class RebalanceImpl {
         return result;
     }
 
+    //向Broker发送Lock请求
     public boolean lock(final MessageQueue mq) {
         //获取指定brokerName的master地址
         FindBrokerResult findBrokerResult = this.mQClientFactory.findBrokerAddressInSubscribe(mq.getBrokerName(), MixAll.MASTER_ID, true);
@@ -163,10 +165,17 @@ public abstract class RebalanceImpl {
         return false;
     }
 
+    //定时每20s尝试锁定所有消息队列
     public void lockAll() {
+        /*
+         * 1 根据processQueueTable的数据，构建key为 BrokerName，value 为 Set<MessageQueue>的map
+         * 在新分配消息队列的时候，也会对新分配的消息队列申请broker加锁，加锁成功后会创建对应的processQueue存入processQueueTable
+         * 也就是说，如果是顺序消息，那么processQueueTable的数据一定是曾经加锁成功了的
+         */
         HashMap<String, Set<MessageQueue>> brokerMqs = this.buildProcessQueueTableByBrokerName();
 
         Iterator<Entry<String, Set<MessageQueue>>> it = brokerMqs.entrySet().iterator();
+        //遍历Map
         while (it.hasNext()) {
             Entry<String, Set<MessageQueue>> entry = it.next();
             final String brokerName = entry.getKey();
@@ -175,6 +184,7 @@ public abstract class RebalanceImpl {
             if (mqs.isEmpty())
                 continue;
 
+            //获取指定brokerName的master地址。
             FindBrokerResult findBrokerResult = this.mQClientFactory.findBrokerAddressInSubscribe(brokerName, MixAll.MASTER_ID, true);
             if (findBrokerResult != null) {
                 LockBatchRequestBody requestBody = new LockBatchRequestBody();
@@ -183,24 +193,31 @@ public abstract class RebalanceImpl {
                 requestBody.setMqSet(mqs);
 
                 try {
+                    //向master的broker发送同步请求，Code为LOCK_BATCH_MQ，请求批量锁定消息队列，返回锁住的mq集合
                     Set<MessageQueue> lockOKMQSet =
                             this.mQClientFactory.getMQClientAPIImpl().lockBatchMQ(findBrokerResult.getBrokerAddr(), requestBody, 1000);
 
+                    //遍历锁住的mq集合
                     for (MessageQueue mq : lockOKMQSet) {
+                        //获取对应的processQueue，设置processQueue的状态
                         ProcessQueue processQueue = this.processQueueTable.get(mq);
                         if (processQueue != null) {
                             if (!processQueue.isLocked()) {
                                 log.info("the message queue locked OK, Group: {} {}", this.consumerGroup, mq);
                             }
 
+                            //设置locked为true
                             processQueue.setLocked(true);
+                            //设置加锁时间
                             processQueue.setLastLockTimestamp(System.currentTimeMillis());
                         }
                     }
+                    //遍历没锁住的集合
                     for (MessageQueue mq : mqs) {
                         if (!lockOKMQSet.contains(mq)) {
                             ProcessQueue processQueue = this.processQueueTable.get(mq);
                             if (processQueue != null) {
+                                //置位没锁住
                                 processQueue.setLocked(false);
                                 log.warn("the message queue locked Failed, Group: {} {}", this.consumerGroup, mq);
                             }
