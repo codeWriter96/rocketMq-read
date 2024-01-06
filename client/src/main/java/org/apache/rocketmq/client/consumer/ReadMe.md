@@ -68,3 +68,7 @@ TAG过滤：在broker与consumer端进行，增加无用数据的网络传输但
 
 提交偏移量实际上就是将新的偏移量存入ConsumerOffsetManager的offsetTable中。
 该缓存对应着磁盘上的{user.home}/store/config/consumerOffset.json文件
+
+**延迟消息实现**
+RocketMQ的开源版本不支持任意时间的延迟消息；只能固定延迟消息的延迟等级，从而实现延迟 固定时间 后重新投递消费。
+采用不同的队列处理同一个延迟等级的消息的方式，不再需要进行消息排序，避免了消息排序的复杂逻辑，能比较简单的实现有限等级的延迟消息，

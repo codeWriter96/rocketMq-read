@@ -426,6 +426,7 @@ public class CommitLog {
                         }
 
                         if (delayLevel > 0) {
+                            //将tagsCode转换成延迟消息下次投递时间（storeTimestamp + 延迟等级时间）
                             tagsCode = this.defaultMessageStore.getScheduleMessageService().computeDeliverTimestamp(delayLevel,
                                     storeTimestamp);
                         }

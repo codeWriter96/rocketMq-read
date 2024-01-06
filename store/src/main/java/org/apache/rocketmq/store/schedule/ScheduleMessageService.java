@@ -52,9 +52,11 @@ import org.apache.rocketmq.store.PutMessageStatus;
 import org.apache.rocketmq.store.SelectMappedBufferResult;
 import org.apache.rocketmq.store.config.StorePathConfigHelper;
 
+//延迟消息
 public class ScheduleMessageService extends ConfigManager {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
 
+    //启动时，首次延迟时间
     private static final long FIRST_DELAY_TIME = 1000L;
     private static final long DELAY_FOR_A_WHILE = 100L;
     private static final long DELAY_FOR_A_PERIOD = 10000L;
@@ -64,13 +66,17 @@ public class ScheduleMessageService extends ConfigManager {
     private final ConcurrentMap<Integer /* level */, Long/* delay timeMillis */> delayLevelTable =
         new ConcurrentHashMap<Integer, Long>(32);
 
+    //delayOffset，延迟队列消费偏移量缓存 -> 延迟消息文件${user.home}/store/config/delayOffset.json
     private final ConcurrentMap<Integer /* level */, Long/* offset */> offsetTable =
         new ConcurrentHashMap<Integer, Long>(32);
     private final DefaultMessageStore defaultMessageStore;
     private final AtomicBoolean started = new AtomicBoolean(false);
+    //延迟消息投递线程池，核心线程数就是最大的延迟等级，默认18
     private ScheduledExecutorService deliverExecutorService;
     private MessageStore writeMessageStore;
+    //最大延迟等级
     private int maxDelayLevel;
+    //是否异步投递消息，默认false
     private boolean enableAsyncDeliver = false;
     private ScheduledExecutorService handleExecutorService;
     private final Map<Integer /* level */, LinkedBlockingQueue<PutResultProcess>> deliverPendingTable =
@@ -125,29 +131,43 @@ public class ScheduleMessageService extends ConfigManager {
         return storeTimestamp + 1000;
     }
 
+    //启动延迟队列
     public void start() {
+        //compareAndSet将未启动改为启动，服务只能启动一次
         if (started.compareAndSet(false, true)) {
+            //调用父类的load方法，将延迟消息文件${user.home}/store/config/delayOffset.json加载到内存的offsetTable集合中
             super.load();
+            //初始化延迟消息投递线程池，核心线程数就是最大的延迟等级，默认18
             this.deliverExecutorService = new ScheduledThreadPoolExecutor(this.maxDelayLevel, new ThreadFactoryImpl("ScheduleMessageTimerThread_"));
+            //异步投递，默认不支持
             if (this.enableAsyncDeliver) {
                 this.handleExecutorService = new ScheduledThreadPoolExecutor(this.maxDelayLevel, new ThreadFactoryImpl("ScheduleMessageExecutorHandleThread_"));
             }
+            //对所有的延迟等级构建一个对应的DeliverDelayedMessageTimerTask调度任务，默认延迟1000ms后执行
             for (Map.Entry<Integer, Long> entry : this.delayLevelTable.entrySet()) {
+                //延迟等级
                 Integer level = entry.getKey();
+                //延迟时间
                 Long timeDelay = entry.getValue();
+                //消费偏移量。根据延迟等级获取对应的延迟队列的消费偏移量，如果没有则设置为0
                 Long offset = this.offsetTable.get(level);
                 if (null == offset) {
                     offset = 0L;
                 }
 
+                //延迟时间不为null，那么为该等级的延迟队列构建一个DeliverDelayedMessageTimerTask调度任务，默认延迟1000ms后执行
                 if (timeDelay != null) {
                     if (this.enableAsyncDeliver) {
                         this.handleExecutorService.schedule(new HandlePutResultTask(level), FIRST_DELAY_TIME, TimeUnit.MILLISECONDS);
                     }
+                    //构建一个DeliverDelayedMessageTimerTask调度任务，默认延迟1000ms后执行
                     this.deliverExecutorService.schedule(new DeliverDelayedMessageTimerTask(level, offset), FIRST_DELAY_TIME, TimeUnit.MILLISECONDS);
                 }
             }
 
+            /*
+             * 构建一个延迟队列消费偏移量持久化的定时调度任务，首次延迟1000ms之后执行，后续每次执行间隔flushDelayOffsetInterval时间，默认10s
+             */
             this.deliverExecutorService.scheduleAtFixedRate(new Runnable() {
 
                 @Override
@@ -205,38 +225,52 @@ public class ScheduleMessageService extends ConfigManager {
         return this.encode(false);
     }
 
+    //加载延迟队列到缓存
     @Override
     public boolean load() {
+        //调用父类ConfigManager#load方法，将延迟消息文件${user.home}/store/config/delayOffset.json加载到内存的offsetTable集合中
+        //delayOffset.json中保存着延迟topic每个队列的消费进度（消费偏移量）
         boolean result = super.load();
+        //解析延迟级别到delayLevelTable集合中
         result = result && this.parseDelayLevel();
+        //矫正每个延迟队列的偏移量
         result = result && this.correctDelayOffset();
         return result;
     }
 
+    //矫正offsetTable的消费偏移量。以ConsumeQueue中偏移量为准
     public boolean correctDelayOffset() {
         try {
+            //遍历延迟等级缓存
             for (int delayLevel : delayLevelTable.keySet()) {
+                //获取延迟等级对应的消费队列，topic为 SCHEDULE_TOPIC_XXXX ，queueId为 delayLevel - 1
                 ConsumeQueue cq =
                     ScheduleMessageService.this.defaultMessageStore.findConsumeQueue(TopicValidator.RMQ_SYS_SCHEDULE_TOPIC,
                         delayLevel2QueueId(delayLevel));
+                //缓存获取消息偏移量
                 Long currentDelayOffset = offsetTable.get(delayLevel);
                 if (currentDelayOffset == null || cq == null) {
                     continue;
                 }
                 long correctDelayOffset = currentDelayOffset;
+                //延迟队列中获取最小偏移量
                 long cqMinOffset = cq.getMinOffsetInQueue();
+                //最大偏移量
                 long cqMaxOffset = cq.getMaxOffsetInQueue();
+                //当前偏移量 < 最小偏移量，correctDelayOffset置为最小偏移量
                 if (currentDelayOffset < cqMinOffset) {
                     correctDelayOffset = cqMinOffset;
                     log.error("schedule CQ offset invalid. offset={}, cqMinOffset={}, cqMaxOffset={}, queueId={}",
                         currentDelayOffset, cqMinOffset, cqMaxOffset, cq.getQueueId());
                 }
 
+                //当前偏移量 > 最大偏移量，correctDelayOffset置为最大偏移量
                 if (currentDelayOffset > cqMaxOffset) {
                     correctDelayOffset = cqMaxOffset;
                     log.error("schedule CQ offset invalid. offset={}, cqMinOffset={}, cqMaxOffset={}, queueId={}",
                         currentDelayOffset, cqMinOffset, cqMaxOffset, cq.getQueueId());
                 }
+                //修改offsetTable的消费偏移量为correctDelayOffset
                 if (correctDelayOffset != currentDelayOffset) {
                     log.error("correct delay offset [ delayLevel {} ] from {} to {}", delayLevel, currentDelayOffset, correctDelayOffset);
                     offsetTable.put(delayLevel, correctDelayOffset);
@@ -273,6 +307,7 @@ public class ScheduleMessageService extends ConfigManager {
         return delayOffsetSerializeWrapper.toJson(prettyFormat);
     }
 
+    //解析延迟等级到delayLevelTable中
     public boolean parseDelayLevel() {
         HashMap<String, Long> timeUnitTable = new HashMap<String, Long>();
         timeUnitTable.put("s", 1000L);
@@ -280,20 +315,30 @@ public class ScheduleMessageService extends ConfigManager {
         timeUnitTable.put("h", 1000L * 60 * 60);
         timeUnitTable.put("d", 1000L * 60 * 60 * 24);
 
+        //从MessageStoreConfig中获取延迟等级字符串messageDelayLevel
         String levelString = this.defaultMessageStore.getMessageStoreConfig().getMessageDelayLevel();
         try {
+            //空格拆分
             String[] levelArray = levelString.split(" ");
             for (int i = 0; i < levelArray.length; i++) {
+                //获取延迟的值
                 String value = levelArray[i];
+                //获取延迟单位
                 String ch = value.substring(value.length() - 1);
+                //从table中获取对应的延迟单位的时间毫秒
                 Long tu = timeUnitTable.get(ch);
 
+                //延迟等级 1开始
                 int level = i + 1;
+                //最大延迟等级修正
                 if (level > this.maxDelayLevel) {
                     this.maxDelayLevel = level;
                 }
+                //延迟时间
                 long num = Long.parseLong(value.substring(0, value.length() - 1));
+                //计算后的延迟时间 ms
                 long delayTimeMillis = tu * num;
+                //存入delayLevelTable中
                 this.delayLevelTable.put(level, delayTimeMillis);
                 if (this.enableAsyncDeliver) {
                     this.deliverPendingTable.put(level, new LinkedBlockingQueue<>());
@@ -308,12 +353,17 @@ public class ScheduleMessageService extends ConfigManager {
         return true;
     }
 
+    //构建内部消息对象，从延迟消息恢复成原始队列消息
+    // 设置topic为REAL_TOPIC属性值，即原始topic，
+    // 设置queueId为REAL_QID属性值，即原始queueId。即恢复为正常消息
     private MessageExtBrokerInner messageTimeup(MessageExt msgExt) {
+        //构建msgInner
         MessageExtBrokerInner msgInner = new MessageExtBrokerInner();
         msgInner.setBody(msgExt.getBody());
         msgInner.setFlag(msgExt.getFlag());
         MessageAccessor.setProperties(msgInner, msgExt.getProperties());
 
+        //还原真正的tagCode值
         TopicFilterType topicFilterType = MessageExt.parseTopicFilterType(msgInner.getSysFlag());
         long tagsCodeValue =
             MessageExtBrokerInner.tagsString2tagsCode(topicFilterType, msgInner.getTags());
@@ -338,8 +388,11 @@ public class ScheduleMessageService extends ConfigManager {
         return msgInner;
     }
 
+    //投递延迟消息任务
     class DeliverDelayedMessageTimerTask implements Runnable {
+        //消息延迟等级
         private final int delayLevel;
+        //当前已消费偏移量
         private final long offset;
 
         public DeliverDelayedMessageTimerTask(int delayLevel, long offset) {
@@ -348,69 +401,104 @@ public class ScheduleMessageService extends ConfigManager {
         }
 
         @Override
+        //运行 延迟消息投递任务
         public void run() {
             try {
+                //如果服务已启动，那么继续执行
                 if (isStarted()) {
+                    //执行延迟消息投递
                     this.executeOnTimeup();
                 }
             } catch (Exception e) {
                 // XXX: warn and notify me
                 log.error("ScheduleMessageService, executeOnTimeup exception", e);
+                //抛出异常，新建一个DeliverDelayedMessageTimerTask任务存入deliverExecutorService，10000ms后执行，本次任务结束
                 this.scheduleNextTimerTask(this.offset, DELAY_FOR_A_PERIOD);
             }
         }
 
         /**
+         * 纠正投递时间
          * @return
          */
         private long correctDeliverTimestamp(final long now, final long deliverTimestamp) {
 
+            //投递时间
             long result = deliverTimestamp;
 
+            //最大时间戳 = 当前时间 + 延迟时间
             long maxTimestamp = now + ScheduleMessageService.this.delayLevelTable.get(this.delayLevel);
+            //如果投递时间 > 最大时间戳
             if (deliverTimestamp > maxTimestamp) {
+                //投递时间改为当前时间
                 result = now;
             }
 
             return result;
         }
 
+        //执行延迟消息投递
         public void executeOnTimeup() {
+            //根据topic和延迟队列id从consumeQueueTable查找需要写入的ConsumeQueue，如果没找到就新建，即ConsumeQueue文件是延迟创建的
             ConsumeQueue cq =
                 ScheduleMessageService.this.defaultMessageStore.findConsumeQueue(TopicValidator.RMQ_SYS_SCHEDULE_TOPIC,
                     delayLevel2QueueId(delayLevel));
 
+            /*
+             * 如果没找到对应的消息队列，新建一个DeliverDelayedMessageTimerTask任务存入deliverExecutorService，100ms后执行，本次任务结束
+             */
             if (cq == null) {
                 this.scheduleNextTimerTask(this.offset, DELAY_FOR_A_WHILE);
                 return;
             }
 
+            /*
+             * 根据逻辑offset定位到物理偏移量，然后截取该偏移量之后的一段Buffer，其包含要拉取的消息的索引数据及对应consumeQueue文件之后的全部索引数据。
+             * 这里截取的Buffer可能包含多条索引数据，因为需要批量拉取多条消息，以及进行消息过滤。
+             */
             SelectMappedBufferResult bufferCQ = cq.getIndexBuffer(this.offset);
+            //没获取到缓存buffer
             if (bufferCQ == null) {
                 long resetOffset;
+                //如果当前消息队列的最小偏移量 大于 当前偏移量，那么当前偏移量无效，设置新的offset为最小偏移量
                 if ((resetOffset = cq.getMinOffsetInQueue()) > this.offset) {
                     log.error("schedule CQ offset invalid. offset={}, cqMinOffset={}, queueId={}",
                         this.offset, resetOffset, cq.getQueueId());
-                } else if ((resetOffset = cq.getMaxOffsetInQueue()) < this.offset) {
+                }
+                //如果当前消息队列的最大偏移量 小于 当前偏移量，那么当前偏移量无效，设置新的offset为最大偏移量
+                else if ((resetOffset = cq.getMaxOffsetInQueue()) < this.offset) {
                     log.error("schedule CQ offset invalid. offset={}, cqMaxOffset={}, queueId={}",
                         this.offset, resetOffset, cq.getQueueId());
                 } else {
                     resetOffset = this.offset;
                 }
 
+                //新建一个DeliverDelayedMessageTimerTask任务存入deliverExecutorService，指定新的消费偏移量，100ms后执行，本次任务结束
                 this.scheduleNextTimerTask(resetOffset, DELAY_FOR_A_WHILE);
                 return;
             }
 
+            //获取到缓存buffer
+            /*
+             * 遍历缓存buffer中的消息，根据tagsCode投递时间判断消息是否到期，
+             * 如果到期则回复真实消息并且投递到真实topic以及对应的queueId中
+             */
             long nextOffset = this.offset;
             try {
+                //i表示总consumeQueue消息索引大小 = 消息数量 * CQ_STORE_UNIT_SIZE 字节
                 int i = 0;
                 ConsumeQueueExt.CqExtUnit cqExtUnit = new ConsumeQueueExt.CqExtUnit();
+                //遍历截取的Buffer中的consumeQueue消息索引，固定长度20b
                 for (; i < bufferCQ.getSize() && isStarted(); i += ConsumeQueue.CQ_STORE_UNIT_SIZE) {
+                    //8字节消息在commitlog文件中的物理偏移量
                     long offsetPy = bufferCQ.getByteBuffer().getLong();
+                    //4字节消息大小
                     int sizePy = bufferCQ.getByteBuffer().getInt();
+                    //8字节消息的tagsCode
+                    //对于延迟消息，tagsCode被替换为延迟消息的未来发送时间（CommitLog#checkMessageAndReturnSize方法中）
                     long tagsCode = bufferCQ.getByteBuffer().getLong();
 
+                    //如果tagsCode是扩展文件地址
                     if (cq.isExtAddr(tagsCode)) {
                         if (cq.getExt(tagsCode, cqExtUnit)) {
                             tagsCode = cqExtUnit.getTagsCode();
@@ -423,21 +511,29 @@ public class ScheduleMessageService extends ConfigManager {
                         }
                     }
 
+                    //当前时间
                     long now = System.currentTimeMillis();
+                    //校验投递时间，必须 <= 当前时间 + 延迟时间
                     long deliverTimestamp = this.correctDeliverTimestamp(now, tagsCode);
                     nextOffset = offset + (i / ConsumeQueue.CQ_STORE_UNIT_SIZE);
 
+                    //如果投递时间大于当前时间，那么新建一个DeliverDelayedMessageTimerTask任务存入deliverExecutorService，指定新的消费偏移量，100ms后执行，本次任务结束
+                    //消息消费
                     long countdown = deliverTimestamp - now;
                     if (countdown > 0) {
                         this.scheduleNextTimerTask(nextOffset, DELAY_FOR_A_WHILE);
                         return;
                     }
 
+                    //根据消息物理偏移量从commitLog中找到该条消息。
                     MessageExt msgExt = ScheduleMessageService.this.defaultMessageStore.lookMessageByOffset(offsetPy, sizePy);
                     if (msgExt == null) {
                         continue;
                     }
 
+                    //构建内部消息对象，
+                    // 设置topic为REAL_TOPIC属性值，即原始topic，
+                    // 设置queueId为REAL_QID属性值，即原始queueId。即恢复为正常消息
                     MessageExtBrokerInner msgInner = ScheduleMessageService.this.messageTimeup(msgExt);
                     if (TopicValidator.RMQ_SYS_TRANS_HALF_TOPIC.equals(msgInner.getTopic())) {
                         log.error("[BUG] the real topic of schedule msg is {}, discard the msg. msg={}",
@@ -445,19 +541,25 @@ public class ScheduleMessageService extends ConfigManager {
                         continue;
                     }
 
+                    //消息投递。bug-> offset应该改为nextOffset
                     boolean deliverSuc;
                     if (ScheduleMessageService.this.enableAsyncDeliver) {
+                        //异步投递。默认不支持
                         deliverSuc = this.asyncDeliver(msgInner, msgExt.getMsgId(), offset, offsetPy, sizePy);
                     } else {
+                        //默认同步投递。
                         deliverSuc = this.syncDeliver(msgInner, msgExt.getMsgId(), offset, offsetPy, sizePy);
                     }
 
+                    //如果投递失败，那么新建一个DeliverDelayedMessageTimerTask任务存入deliverExecutorService，
+                    // 指定新的消费偏移量，100ms后执行，本次任务结束
                     if (!deliverSuc) {
                         this.scheduleNextTimerTask(nextOffset, DELAY_FOR_A_WHILE);
                         return;
                     }
                 }
 
+                //遍历结束，更新下一个offset
                 nextOffset = this.offset + (i / ConsumeQueue.CQ_STORE_UNIT_SIZE);
             } catch (Exception e) {
                 log.error("ScheduleMessageService, messageTimeup execute error, offset = {}", nextOffset, e);
@@ -465,6 +567,11 @@ public class ScheduleMessageService extends ConfigManager {
                 bufferCQ.release();
             }
 
+            /*
+             * 新建一个DeliverDelayedMessageTimerTask任务存入deliverExecutorService，指定新的消费偏移量，100ms后执行，本次任务结束
+             *
+             * 保证线程任务的活性
+             */
             this.scheduleNextTimerTask(nextOffset, DELAY_FOR_A_WHILE);
         }
 
@@ -473,12 +580,16 @@ public class ScheduleMessageService extends ConfigManager {
                 this.delayLevel, offset), delay, TimeUnit.MILLISECONDS);
         }
 
+        //同步投递消息
         private boolean syncDeliver(MessageExtBrokerInner msgInner, String msgId, long offset, long offsetPy,
             int sizePy) {
+            //投递消息，内部调用asyncPutMessage方法
             PutResultProcess resultProcess = deliverMessage(msgInner, msgId, offset, offsetPy, sizePy, false);
+            //投递结果
             PutMessageResult result = resultProcess.get();
             boolean sendStatus = result != null && result.getPutMessageStatus() == PutMessageStatus.PUT_OK;
             if (sendStatus) {
+                //如果发送成功，那么更新offsetTable中的消费偏移量
                 ScheduleMessageService.this.updateOffset(this.delayLevel, resultProcess.getNextOffset());
             }
             return sendStatus;

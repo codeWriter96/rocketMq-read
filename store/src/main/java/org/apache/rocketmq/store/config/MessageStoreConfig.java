@@ -136,7 +136,9 @@ public class MessageStoreConfig {
     private FlushDiskType flushDiskType = FlushDiskType.ASYNC_FLUSH;
     private int syncFlushTimeout = 1000 * 5;
     private int slaveTimeout = 3000;
+    //延迟等级，空格拆分
     private String messageDelayLevel = "1s 5s 10s 30s 1m 2m 3m 4m 5m 6m 7m 8m 9m 10m 20m 30m 1h 2h";
+    //延迟消息的消费偏移量：定时刷盘时间间隔，默认10s
     private long flushDelayOffsetInterval = 1000 * 10;
     @ImportantField
     private boolean cleanFileForciblyEnable = true;
