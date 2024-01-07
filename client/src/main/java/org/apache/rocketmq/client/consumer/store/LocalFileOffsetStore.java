@@ -38,6 +38,7 @@ import org.apache.rocketmq.remoting.exception.RemotingException;
 
 /**
  * Local storage implementation
+ * 消费者自己管理消费进度类
  */
 public class LocalFileOffsetStore implements OffsetStore {
     public final static String LOCAL_OFFSET_STORE_DIR = System.getProperty(
@@ -61,6 +62,8 @@ public class LocalFileOffsetStore implements OffsetStore {
 
     @Override
     public void load() throws MQClientException {
+        //加载本地offset文件 地址为{user.home}/.rocketmq_offsets/{clientId}/{groupName}/offsets.json
+        //配置在文件中以json形式存在
         OffsetSerializeWrapper offsetSerializeWrapper = this.readLocalOffset();
         if (offsetSerializeWrapper != null && offsetSerializeWrapper.getOffsetTable() != null) {
             offsetTable.putAll(offsetSerializeWrapper.getOffsetTable());
@@ -119,13 +122,16 @@ public class LocalFileOffsetStore implements OffsetStore {
                         return -1;
                     }
                 }
+                //本地存储json文件中重新拉取偏移量
                 case READ_FROM_STORE: {
                     OffsetSerializeWrapper offsetSerializeWrapper;
                     try {
+                        //本地存储中重新拉取偏移量
                         offsetSerializeWrapper = this.readLocalOffset();
                     } catch (MQClientException e) {
                         return -1;
                     }
+                    //拉取偏移量不为空，重新覆盖当前偏移量
                     if (offsetSerializeWrapper != null && offsetSerializeWrapper.getOffsetTable() != null) {
                         AtomicLong offset = offsetSerializeWrapper.getOffsetTable().get(mq);
                         if (offset != null) {
